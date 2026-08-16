@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ShootPX API test console</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 32px auto; padding: 0 16px; color: #111; }
+  h2 { margin-top: 40px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+  section { margin-bottom: 24px; }
+  input, select, button { font-size: 14px; padding: 6px 10px; margin: 4px 4px 4px 0; }
+  button { cursor: pointer; }
+  pre { background: #f4f4f4; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .warn { color: #a00; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>ShootPX API test console</h1>
+<p>Not the real app — just buttons wired straight to the backend so we can both see raw responses while building.
+First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> in this folder and fill in your real Firebase web app config (that file is gitignored — never committed).</p>
+
+<section>
+  <h2>0. Config</h2>
+  <div id="config-warning" class="warn"></div>
+</section>
+
+<section>
+  <h2>1. Sign in</h2>
+  <div class="row">
+    <button id="google-btn">Continue with Google</button>
+  </div>
+  <div class="row">
+    <input id="email-input" type="email" placeholder="you@example.com" size="30" />
+    <button id="send-link-btn">Send magic link</button>
+  </div>
+  <div class="row">
+    <button id="me-btn">Who am I (/auth/me)</button>
+    <button id="logout-btn">Logout</button>
+  </div>
+</section>
+
+<section>
+  <h2>2. Teams</h2>
+  <div class="row">
+    <input id="team-name-input" placeholder="Team name" size="20" />
+    <button id="create-team-btn">Create team</button>
+    <button id="list-teams-btn">List my teams</button>
+  </div>
+  <div class="row">
+    <input id="team-id-input" placeholder="team_id (paste from above)" size="36" />
+    <button id="list-members-btn">List members</button>
+    <button id="list-invites-btn">List pending invites</button>
+  </div>
+  <div class="row">
+    <input id="invite-email-input" type="email" placeholder="invite@example.com" size="24" />
+    <select id="invite-role-input">
+      <option value="editor" selected>editor</option>
+      <option value="owner">owner</option>
+    </select>
+    <button id="add-member-btn">Add member</button>
+  </div>
+</section>
+
+<section>
+  <h2>3. Assets &amp; Generation</h2>
+  <p style="color:#666;font-size:13px;margin:0 0 8px;">No project step — assets and jobs live directly on a team.</p>
+  <div class="row">
+    <input id="asset-team-id-input" placeholder="team_id (paste from section 2)" size="36" />
+    <input id="asset-file-input" type="file" />
+    <button id="upload-asset-btn">Upload asset</button>
+  </div>
+  <div class="row">
+    <input id="generate-team-id-input" placeholder="team_id" size="24" />
+    <input id="generate-feature-type-input" placeholder="feature_type e.g. on_model_shots" size="20" />
+  </div>
+  <div class="row">
+    <input id="generate-source-asset-id-input" placeholder="source_asset_id (paste from upload above)" size="36" />
+    <button id="generate-btn">Generate</button>
+  </div>
+</section>
+
+<section>
+  <h2>Log</h2>
+  <pre id="log">(responses show up here)</pre>
+</section>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup,
+    isSignInWithEmailLink, signInWithEmailLink,
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+  import { firebaseConfig } from "./firebase-config.js";
+
+  const BACKEND_URL = "http://localhost:8000";
+
+  const logEl = document.getElementById("log");
+  const log = (label, data) => {
+    logEl.textContent = `${label}\n` + JSON.stringify(data, null, 2) + "\n\n" + logEl.textContent;
+  };
+  const logError = (label, err) => {
+    logEl.textContent = `${label} FAILED\n` + `${err.code || ""} ${err.message || err}` + "\n\n" + logEl.textContent;
+  };
+
+  if (firebaseConfig.apiKey === "REPLACE_ME") {
+    document.getElementById("config-warning").textContent =
+      "firebaseConfig is still a placeholder — edit the <script> block in this file with your Firebase web app's config before using this page.";
+  }
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+
+  async function establishBackendSession(user) {
+    const id_token = await user.getIdToken();
+    const res = await fetch(`${BACKEND_URL}/auth/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include", // so the session cookie the backend sets actually sticks
+      body: JSON.stringify({ id_token }),
+    });
+    log("POST /auth/session", await res.json());
+  }
+
+  document.getElementById("google-btn").onclick = async () => {
+    try {
+      const result = await signInWithPopup(auth, new GoogleAuthProvider());
+      await establishBackendSession(result.user);
+    } catch (err) {
+      logError("signInWithPopup", err);
+    }
+  };
+
+  // Ask OUR backend to generate + email the link, instead of calling
+  // Firebase's own sendSignInLinkToEmail — Firebase's shared sending
+  // address gets flagged as spam; our own SMTP send doesn't.
+  document.getElementById("send-link-btn").onclick = async () => {
+    const email = document.getElementById("email-input").value;
+    window.localStorage.setItem("emailForSignIn", email);
+    try {
+      const res = await fetch(`${BACKEND_URL}/auth/email-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, continue_url: window.location.href }),
+      });
+      log("POST /auth/email-link", await res.json());
+    } catch (err) {
+      logError("POST /auth/email-link", err);
+    }
+  };
+
+  // If this page was opened FROM the emailed link, finish the sign-in.
+  if (isSignInWithEmailLink(auth, window.location.href)) {
+    let email = window.localStorage.getItem("emailForSignIn");
+    if (!email) email = window.prompt("Confirm your email for sign-in");
+    signInWithEmailLink(auth, email, window.location.href)
+      .then(async (result) => {
+        window.localStorage.removeItem("emailForSignIn");
+        await establishBackendSession(result.user);
+      })
+      .catch((err) => logError("signInWithEmailLink", err));
+  }
+
+  document.getElementById("me-btn").onclick = async () => {
+    const res = await fetch(`${BACKEND_URL}/auth/me`, { credentials: "include" });
+    log("GET /auth/me", await res.json());
+  };
+
+  document.getElementById("logout-btn").onclick = async () => {
+    const res = await fetch(`${BACKEND_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    log("POST /auth/logout", await res.json());
+  };
+
+  document.getElementById("create-team-btn").onclick = async () => {
+    const name = document.getElementById("team-name-input").value;
+    const res = await fetch(`${BACKEND_URL}/teams`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    log("POST /teams", await res.json());
+  };
+
+  document.getElementById("list-teams-btn").onclick = async () => {
+    const res = await fetch(`${BACKEND_URL}/teams`, { credentials: "include" });
+    log("GET /teams", await res.json());
+  };
+
+  document.getElementById("list-members-btn").onclick = async () => {
+    const teamId = document.getElementById("team-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/teams/${teamId}/members`, { credentials: "include" });
+    log("GET /teams/:id/members", await res.json());
+  };
+
+  document.getElementById("list-invites-btn").onclick = async () => {
+    const teamId = document.getElementById("team-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/teams/${teamId}/invites`, { credentials: "include" });
+    log("GET /teams/:id/invites", await res.json());
+  };
+
+  document.getElementById("add-member-btn").onclick = async () => {
+    const teamId = document.getElementById("team-id-input").value;
+    const email = document.getElementById("invite-email-input").value;
+    const role = document.getElementById("invite-role-input").value;
+    const res = await fetch(`${BACKEND_URL}/teams/${teamId}/members`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role, continue_url: window.location.href }),
+    });
+    log("POST /teams/:id/members", await res.json());
+  };
+
+  document.getElementById("upload-asset-btn").onclick = async () => {
+    const teamId = document.getElementById("asset-team-id-input").value;
+    const file = document.getElementById("asset-file-input").files[0];
+    if (!file) { logError("POST /teams/:id/assets", { message: "pick a file first" }); return; }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`${BACKEND_URL}/teams/${teamId}/assets`, {
+      method: "POST", credentials: "include",
+      body: formData, // no Content-Type header — the browser sets the multipart boundary itself
+    });
+    const data = await res.json();
+    log("POST /teams/:id/assets", data);
+    // convenience: carry the new asset id + team_id straight into the generate fields
+    if (data.id) document.getElementById("generate-source-asset-id-input").value = data.id;
+    if (data.team_id) document.getElementById("generate-team-id-input").value = data.team_id;
+  };
+
+  document.getElementById("generate-btn").onclick = async () => {
+    const team_id = document.getElementById("generate-team-id-input").value;
+    const feature_type = document.getElementById("generate-feature-type-input").value;
+    const source_asset_id = document.getElementById("generate-source-asset-id-input").value || null;
+    const res = await fetch(`${BACKEND_URL}/generate`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id, feature_type, source_asset_id, input_payload: {} }),
+    });
+    log("POST /generate", await res.json());
+  };
+</script>
+
+</body>
+</html>

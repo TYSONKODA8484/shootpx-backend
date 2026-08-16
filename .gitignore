@@ -1,0 +1,29 @@
+# --- Python / venv ---
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Secrets / local config (never commit) ---
+.env
+.env.*.local
+firebase-service-account.json
+test-console/firebase-config.js
+
+# --- Local databases (leftover from early SQLite; harmless to keep ignored) ---
+*.db
+*.sqlite3
+
+# --- Runtime data (uploaded/generated files — not code, not meant to ship) ---
+storage/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

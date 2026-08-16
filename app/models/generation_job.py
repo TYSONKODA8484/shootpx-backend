@@ -1,0 +1,36 @@
+import enum
+from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String
+
+from app.core.db import Base
+from app.models.team import new_id
+
+
+class JobStatus(str, enum.Enum):
+    queued = "queued"
+    processing = "processing"
+    done = "done"
+    failed = "failed"
+
+
+class GenerationJob(Base):
+    """One attempt at running a tool. feature_type is a plain string on
+    purpose — it's the dispatch key that will pick which of the 23 tools'
+    logic runs, once that logic exists; today every feature_type just hits
+    the same MockAIProvider. Scoped directly to a team, same as Asset —
+    team_id for access, created_by for who actually ran it."""
+
+    __tablename__ = "generation_jobs"
+
+    id = Column(String, primary_key=True, default=new_id)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False)
+    created_by = Column(String, ForeignKey("users.id"), nullable=False)
+    feature_type = Column(String, nullable=False)
+    status = Column(String, default=JobStatus.queued.value, nullable=False)  # queued|processing|done|failed
+    source_asset_id = Column(String, ForeignKey("assets.id"), nullable=True)
+    output_asset_id = Column(String, ForeignKey("assets.id"), nullable=True)
+    input_payload = Column(JSON, default=dict, nullable=False)
+    error = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
