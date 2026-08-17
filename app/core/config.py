@@ -36,6 +36,23 @@ class Settings(BaseSettings):
     # Swap LocalStorage for an R2/S3-backed implementation later.
     STORAGE_ROOT_DIR: str = "./storage"
 
+    # Redis — backs the arq task queue (app/worker.py) and the per-team
+    # generation lock. Get one running locally first; see DESIGN.md.
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Hard cap on how many generation jobs run at once, across every team
+    # combined — protects whatever real AI API gets wired in later from
+    # unlimited parallel requests. Independent of the per-team lock (that
+    # one limits fairness *between* teams; this one limits total load).
+    MAX_CONCURRENT_GENERATIONS: int = 10
+
+    # Artificial delay (seconds) the worker sleeps before calling
+    # MockAIProvider, since the mock itself returns instantly. Without this,
+    # the per-team lock has nothing to serialize that's slow enough to
+    # observe by polling. Set to 0 once a real (naturally slow) AI provider
+    # replaces the mock.
+    MOCK_GENERATION_DELAY_SECONDS: int = 3
+
     # Outgoing email (Resend SMTP) — sends the magic-link and team-invite
     # emails ourselves; Firebase never sends mail in this project.
     SMTP_HOST: str = "smtp.gmail.com"
