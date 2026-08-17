@@ -871,6 +871,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.db import SessionLocal  # noqa: E402
 from app.core.security import create_session_token  # noqa: E402
+from app.models import invite as invite_models  # noqa: E402,F401  (registers TeamInvite on
+# Base — Team.invites = relationship("TeamInvite", ...) fails mapper
+# configuration otherwise, the same reason app/main.py imports it)
 from app.models.asset import Asset, AssetKind, MediaType  # noqa: E402
 from app.models.team import Team, TeamMembership, TeamRole, new_id  # noqa: E402
 from app.models.user import User  # noqa: E402
@@ -907,6 +910,11 @@ def setup_team_with_assets(db, name: str, n_assets: int) -> tuple[str, str, list
     team = Team(id=new_id(), name=f"{name}'s team")
     db.add(team)
     db.add(TeamMembership(team_id=team.id, user_id=user.id, role=TeamRole.owner.value))
+    db.flush()  # Asset has plain FK columns, not an ORM relationship() to
+    # Team/User, so unit-of-work insert ordering isn't relationship-driven
+    # here — without this flush, Postgres can receive the INSERT INTO
+    # assets before INSERT INTO teams in the same commit and reject it with
+    # a ForeignKeyViolation (reproduced; this is real, not speculative).
 
     asset_ids = []
     for i in range(n_assets):
