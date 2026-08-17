@@ -30,6 +30,11 @@ from app.core.storage import storage
 from app.models.asset import Asset, AssetKind
 from app.models.generation_job import GenerationJob, JobStatus
 from app.models.team import new_id
+from app.models import invite as invite_models  # noqa: F401  (registers TeamInvite on Base —
+# Team.invites references it by string; SQLAlchemy needs it imported in
+# this process before mapper configuration runs, same as app/main.py)
+from app.models import user as user_models  # noqa: F401  (registers User on Base —
+# TeamMembership.user references it by string, same reason as above)
 
 LOCK_TTL_SECONDS = 600  # generous ceiling: if a worker crashes mid-job
 # without releasing, the team isn't wedged forever, just until this expires
