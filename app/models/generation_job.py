@@ -30,6 +30,11 @@ class GenerationJob(Base):
     status = Column(String, default=JobStatus.queued.value, nullable=False)  # queued|processing|done|failed
     source_asset_id = Column(String, ForeignKey("assets.id"), nullable=True)
     output_asset_id = Column(String, ForeignKey("assets.id"), nullable=True)
+    batch_id = Column(String, nullable=True)  # shared by every job from one
+    # /generate/bulk call; null for a single /generate. Not a FK — there's
+    # no separate batches table, same lightweight-string pattern as
+    # feature_type. Add an index if batch lookups ever get slow; skipped
+    # for now (YAGNI at this scale).
     input_payload = Column(JSON, default=dict, nullable=False)
     error = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
