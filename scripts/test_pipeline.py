@@ -30,7 +30,11 @@ from app.models.asset import Asset, AssetKind, MediaType  # noqa: E402
 from app.models.team import Team, TeamMembership, TeamRole, new_id  # noqa: E402
 from app.models.user import User  # noqa: E402
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://127.0.0.1:8000"  # not "localhost": on Windows, getaddrinfo("localhost")
+# returns ::1 before 127.0.0.1, and urllib tries addresses sequentially (no
+# happy-eyeballs racing like curl does) — since uvicorn's default --host binds
+# 127.0.0.1 only, every request would eat a ~2s IPv6-connect-timeout before
+# falling back to the IPv4 address that's actually listening.
 
 
 def api(method: str, path: str, cookie: str, body: dict | None = None) -> tuple[int, dict]:
