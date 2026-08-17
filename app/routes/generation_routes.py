@@ -11,9 +11,9 @@ router = APIRouter(tags=["generation"])
 
 
 @router.post("/generate", response_model=GenerationJobOut, status_code=status.HTTP_201_CREATED)
-def generate(
+async def generate(
     payload: GenerateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return generation_controller.run_generation(db, current_user, payload)
+    return await generation_controller.run_generation(db, current_user, payload)

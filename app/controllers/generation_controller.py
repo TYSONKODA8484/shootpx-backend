@@ -3,17 +3,15 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.ai_provider import ai_provider
 from app.core.permissions import compute_permissions, get_membership
-from app.core.storage import storage
-from app.models.asset import Asset, AssetKind
+from app.core.queue import enqueue_generation_job
+from app.models.asset import Asset
 from app.models.generation_job import GenerationJob, JobStatus
-from app.models.team import new_id
 from app.models.user import User
 from app.schemas.generation import GenerateRequest
 
 
-def run_generation(db: Session, current_user: User, payload: GenerateRequest) -> GenerationJob:
+async def run_generation(db: Session, current_user: User, payload: GenerateRequest) -> GenerationJob:
     membership = get_membership(db, payload.team_id, current_user.id)
     if not compute_permissions(membership.role).can_generate:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to generate on this team")
@@ -38,36 +36,18 @@ def run_generation(db: Session, current_user: User, payload: GenerateRequest) ->
     db.commit()
     db.refresh(job)
 
-    # No queue/worker yet — v1 is deliberately synchronous. Whatever runs the
-    # 23 tools' real logic later can dispatch on feature_type right here.
+    # Real work happens in app/worker.py:run_generation_job, once that
+    # team's lock is free and a global worker slot is available. If
+    # enqueueing itself fails (e.g. Redis unreachable), mark the job
+    # honestly failed rather than leaving it stuck at "processing" forever
+    # with nothing ever going to pick it up.
     try:
-        result = ai_provider.generate(
-            feature_type=payload.feature_type,
-            source_asset_url=source_asset.url if source_asset else None,
-            input_payload=payload.input_payload,
-        )
-        key = f"{payload.team_id}/generated/{new_id()}.{result.extension}"
-        storage.save(key, result.content)
-
-        output_asset = Asset(
-            team_id=payload.team_id,
-            created_by=current_user.id,  # attributed to whoever triggered the job, not the AI
-            kind=AssetKind.generated.value,
-            media_type=result.media_type,
-            storage_key=key,
-            url=storage.url_for(key),
-        )
-        db.add(output_asset)
-        db.flush()  # get output_asset.id before attaching it to the job
-
-        job.output_asset_id = output_asset.id
-        job.status = JobStatus.done.value
-        job.completed_at = datetime.utcnow()
+        await enqueue_generation_job(job.id, payload.team_id)
     except Exception as exc:
         job.status = JobStatus.failed.value
-        job.error = str(exc)
+        job.error = f"Failed to enqueue: {exc}"
         job.completed_at = datetime.utcnow()
+        db.commit()
+        raise
 
-    db.commit()
-    db.refresh(job)
     return job
