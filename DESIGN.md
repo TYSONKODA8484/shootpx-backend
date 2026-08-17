@@ -145,6 +145,10 @@ if login ever starts intermittently failing again with no code changes.
 
 ## Testing it locally
 
+Ensure Redis is running first (see the "Running Redis locally on Windows"
+section in "Core product system: assets & generation jobs" below for setup).
+Then, in three terminals:
+
 ```
 # terminal 1
 cd backend
@@ -152,12 +156,16 @@ cd backend
 uvicorn app.main:app --reload
 
 # terminal 2
+cd backend
+./venv/Scripts/python.exe -m arq app.worker.WorkerSettings
+
+# terminal 3
 cd backend/test-console
 python -m http.server 5500
 ```
 
 Open `http://localhost:5500`. Everything's driven by hand from that page —
-no real frontend yet. When restarting either server, kill the previous
+no real frontend yet. When restarting any server, kill the previous
 instance first; leaving old ones running caused real confusion earlier
 (multiple processes competing for the same port).
 
@@ -190,10 +198,42 @@ scoped straight to a team.
 | source_asset_id, output_asset_id | FK -> assets.id, both nullable |
 | input_payload | JSON, empty for now — per-tool options land here later |
 
-**Routes:** `POST /teams/{team_id}/assets` (upload), `POST /generate` (body:
-`team_id`, `feature_type`, `source_asset_id`, `input_payload`) — synchronous
-today (no queue/worker), calls the AI provider inline and returns the
-finished job.
+**Routes:** `POST /teams/{team_id}/assets` (upload), `POST /generate`
+(single), `POST /generate/bulk` (up to 100 assets, one `feature_type`,
+shared `batch_id`), `GET /jobs?ids=...`, `GET /batches/{batch_id}`.
+
+Generation is queued, not synchronous: `POST /generate`/`/generate/bulk`
+create `GenerationJob` row(s) (`status: "processing"` immediately) and
+enqueue arq tasks; a separate worker process (`app/worker.py`, run via
+`arq app.worker.WorkerSettings`) does the actual `AIProvider.generate()`
+call later. Two concurrency limits apply, independently:
+- **Per-team lock** (Redis `SET NX EX`, released via a safe Lua
+  check-and-delete): only one `GenerationJob` per team runs at a time,
+  across `/generate` and `/generate/bulk` alike. This is the *entire*
+  mechanism behind bulk processing "one after another" — there's no
+  separate batch-runner, just this same lock. A job that finds the lock
+  held re-queues itself (`arq.Retry`) instead of blocking a worker slot.
+- **Global cap** (`MAX_CONCURRENT_GENERATIONS`, arq's `max_jobs`): total
+  jobs running across *every* team combined, protecting whatever real AI
+  API gets wired in later from unlimited parallel requests.
+
+`batch_id` (nullable string on `GenerationJob`) is shared by every job
+from one `/generate/bulk` call, null for a single `/generate`. Not its own
+table — same lightweight-string pattern as `feature_type`.
+
+`MockAIProvider` is deliberately slowed down now (`MOCK_GENERATION_DELAY_SECONDS`,
+default 3s, slept in the worker before calling it) — instant mock results
+made the per-team lock unobservable by polling. `ai_provider.py` itself is
+untouched; drop the setting to `0` once a real, naturally-slow provider
+replaces the mock.
+
+**Running Redis locally on Windows:** this machine has no Docker or WSL, so
+the recommended local Redis is **Memurai** — a native Windows service,
+Redis-protocol-compatible, installable via `winget install
+Memurai.MemuraiDeveloper` or download the MSI from
+[memurai.com](https://www.memurai.com/). Once installed, Redis runs as a
+Windows service on `127.0.0.1:6379` by default (`REDIS_URL=redis://127.0.0.1:6379`).
+Alternatively, Docker Desktop or a WSL2 distro with Redis can work too.
 
 **Abstractions**, same pattern as auth/email — one interface, one local
 implementation, swap later without touching callers:

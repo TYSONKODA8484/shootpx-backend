@@ -12,9 +12,11 @@ asset/generation-job system that every AI tool plugs into.
   an account yet works — they get an email, and joining happens
   automatically the moment they first sign in.
 - **Assets & generation jobs**: the generic container every tool works
-  through. Upload a file, `POST /generate` with a `feature_type`, get back
-  a job with an output asset. No per-tool logic yet — a mock AI provider
-  proves the request → job → asset loop end to end.
+  through. Upload a file, `POST /generate` (or `/generate/bulk`) with a
+  `feature_type` — the job is queued and processed by a separate worker;
+  poll `GET /jobs` or `GET /batches/{batch_id}` for status. No per-tool
+  logic yet — a mock AI provider proves the request → job → asset loop end
+  to end.
 
 See [`DESIGN.md`](./DESIGN.md) for the full architecture writeup — schema,
 auth flow, and the reasoning behind the bigger decisions. This file is just
@@ -70,6 +72,7 @@ cp .env.example .env
 | `SECRET_KEY` | `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
 | `FIREBASE_SERVICE_ACCOUNT_PATH` | Firebase Console → Project Settings → Service Accounts → *Generate new private key*. Save the downloaded JSON as `backend/firebase-service-account.json` (gitignored) |
 | `SMTP_*` | [Resend](https://resend.com) → API Keys → *Create API Key*. `SMTP_PASSWORD` is the `re_...` key |
+| `REDIS_URL` | your local Redis — see `DESIGN.md` for how to get one running on Windows |
 
 **4. Firebase sign-in methods**
 
@@ -78,8 +81,16 @@ and **Email link (passwordless)**.
 
 ## Running it
 
+This now needs **two processes** — the API and the arq worker that
+actually runs generation jobs. Start Redis first (see `DESIGN.md` for how
+to get one running locally on Windows), then:
+
 ```bash
+# terminal 1 — the API
 uvicorn app.main:app --reload
+
+# terminal 2 — the worker (processes queued /generate and /generate/bulk jobs)
+./venv/Scripts/python.exe -m arq app.worker.WorkerSettings
 ```
 
 The API is now at `http://localhost:8000`, with interactive docs (every
@@ -112,7 +123,10 @@ are served from `localhost`.
 | `POST /teams/{id}/members` | invite someone by email (owner-only) |
 | `GET /teams/{id}/members` / `GET /teams/{id}/invites` | |
 | `POST /teams/{id}/assets` | upload a file |
-| `POST /generate` | run a tool: `team_id`, `feature_type`, `source_asset_id`, `input_payload` |
+| `POST /generate` | run a tool on one asset: `team_id`, `feature_type`, `source_asset_id`, `input_payload` — enqueued, returns immediately |
+| `POST /generate/bulk` | run a tool on up to 100 assets at once: `team_id`, `feature_type`, `asset_ids`, `input_payload` — returns a `batch_id` + all job ids immediately |
+| `GET /jobs?ids=...` | poll one or many jobs by comma-separated id |
+| `GET /batches/{batch_id}` | poll a bulk submission's aggregate + per-job status |
 
 Full request/response shapes are in `/docs`, not duplicated here — this
 table is just so you know what exists before opening it.
