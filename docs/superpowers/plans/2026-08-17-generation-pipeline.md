@@ -294,6 +294,14 @@ class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
     max_jobs = settings.MAX_CONCURRENT_GENERATIONS
     job_timeout = 300  # generous; real AI calls later may take a while
+    max_tries = 10_000  # lock-contention retries (arq.Retry, 0.5s apart)
+    # aren't real failures, just polling for the per-team lock to free up —
+    # they shouldn't count toward arq's normal retry-then-give-up budget
+    # (default max_tries=5, which a job waiting behind even a handful of
+    # others in a bulk batch would blow through in a couple seconds,
+    # getting silently killed by arq before ever reaching _process_job,
+    # leaving its GenerationJob row stuck at "processing" forever). Bounded
+    # in practice by LOCK_TTL_SECONDS and realistic per-team queue depth.
 ```
 
 - [ ] **Step 3: Verify the worker starts and connects**
