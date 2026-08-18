@@ -33,12 +33,16 @@ Resend (SMTP) · local disk storage (swappable later for R2/S3)
 app/
   core/         config, DB connection, session-cookie signing,
                 Firebase Admin SDK, storage + AI-provider abstractions
+  tools/        the feature_type registry — one file per tool (see
+                DESIGN.md's "Tool registry" section)
   middleware/   the login gate (get_current_user), CORS setup
   models/       SQLAlchemy tables
   schemas/      Pydantic request/response shapes
   controllers/  the actual logic — routes call these
   routes/       thin FastAPI routers, just URL -> controller wiring
+  worker.py     arq worker process — runs queued generation jobs
   main.py       creates the app, registers everything
+alembic/        DB migrations (alembic upgrade head / alembic revision --autogenerate)
 test-console/   a bare-bones HTML page for exercising the API by hand
                 (no real frontend exists yet)
 ```

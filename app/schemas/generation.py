@@ -2,9 +2,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.tools import known_feature_types
 from app.models.asset import MediaType
 from app.models.generation_job import JobStatus
+from app.tools import known_feature_types
 
 
 def _known_feature_type(v: str) -> str:

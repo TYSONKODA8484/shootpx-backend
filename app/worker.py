@@ -16,7 +16,8 @@ arq's Retry rather than blocking — so a job waiting on someone else's lock
 does not tie up one of the global max_jobs slots while it waits.
 
 Which AIProvider instance actually runs a job is looked up per job from
-app/core/tools.py's TOOLS registry, keyed by feature_type — not a single
+app/tools/ (one file per tool, each registering itself into a shared
+registry — see app/tools/registry.py), keyed by feature_type, not a single
 hardcoded provider. Different tools can point at different providers (or
 share one) without this file changing.
 
@@ -47,7 +48,7 @@ from app.core.ai_provider import GenerationFailed, GenerationHandle, GenerationP
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.storage import storage
-from app.core.tools import get_tool
+from app.tools import get_tool
 from app.models.asset import Asset, AssetKind
 from app.models.generation_job import GenerationJob, JobStatus
 from app.models.team import new_id
