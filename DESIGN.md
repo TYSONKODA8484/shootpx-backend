@@ -145,9 +145,9 @@ if login ever starts intermittently failing again with no code changes.
 
 ## Testing it locally
 
-Ensure Redis is running first (see the "Running Redis locally on Windows"
-section in "Core product system: assets & generation jobs" below for setup).
-Then, in three terminals:
+Ensure Redis is running first (see the "Running Redis" section in "Core
+product system: assets & generation jobs" below for setup). Then, in three
+terminals:
 
 ```
 # terminal 1
@@ -196,6 +196,7 @@ scoped straight to a team.
 | feature_type | plain string — the future dispatch key for which of the 23 tools' logic runs; today every value hits the same `MockAIProvider` |
 | status | `'queued'` \| `'processing'` \| `'done'` \| `'failed'` |
 | source_asset_id, output_asset_id | FK -> assets.id, both nullable |
+| external_job_id, provider | the aggregator's own job id + which `AIProvider` handled it, both null until submitted — see "Submit/poll, not one blocking call" below |
 | input_payload | JSON, empty for now — per-tool options land here later |
 
 **Routes:** `POST /teams/{team_id}/assets` (upload), `POST /generate`
@@ -205,8 +206,8 @@ shared `batch_id`), `GET /jobs?ids=...`, `GET /batches/{batch_id}`.
 Generation is queued, not synchronous: `POST /generate`/`/generate/bulk`
 create `GenerationJob` row(s) (`status: "processing"` immediately) and
 enqueue arq tasks; a separate worker process (`app/worker.py`, run via
-`arq app.worker.WorkerSettings`) does the actual `AIProvider.generate()`
-call later. Two concurrency limits apply, independently:
+`arq app.worker.WorkerSettings`) does the actual generation later. Two
+concurrency limits apply, independently:
 - **Per-team lock** (Redis `SET NX EX`, released via a safe Lua
   check-and-delete): only one `GenerationJob` per team runs at a time,
   across `/generate` and `/generate/bulk` alike. This is the *entire*
@@ -221,28 +222,51 @@ call later. Two concurrency limits apply, independently:
 from one `/generate/bulk` call, null for a single `/generate`. Not its own
 table — same lightweight-string pattern as `feature_type`.
 
-`MockAIProvider` is deliberately slowed down now (`MOCK_GENERATION_DELAY_SECONDS`,
-default 3s, slept in the worker before calling it) — instant mock results
-made the per-team lock unobservable by polling. `ai_provider.py` itself is
-untouched; drop the setting to `0` once a real, naturally-slow provider
-replaces the mock.
+**Submit/poll, not one blocking call.** `AIProvider` (`core/ai_provider.py`)
+is deliberately *not* "call it and get bytes back" — real aggregators (fal.ai,
+Segmind, ...) are themselves async: you submit and get an external job id
+back in ~1s, and the actual generation (seconds to minutes, more for video)
+happens on their side. `submit()` does the minimum to get that id;
+`poll_result()` is one status check, raising `GenerationPending` if it's not
+done yet. `app/worker.py`'s `run_generation_job` never blocks waiting on
+either — one arq invocation does exactly one submit or one poll, and if
+still pending, requeues itself via `Retry(defer=GENERATION_POLL_INTERVAL_SECONDS)`,
+freeing its worker slot in the meantime (same trick as the lock-wait retry).
+This means a single job's lifetime can span many separate invocations,
+possibly on different worker processes once more than one is running —
+nothing about progress lives in memory; `external_job_id`/`provider` on the
+row and the Redis lock (refreshed across those invocations, not re-acquired
+per invocation — `run_generation_job` checks whether it already holds the
+key before attempting `SET NX`) are the only state. `GENERATION_TIMEOUT_SECONDS`
+bounds a job's total wall-clock lifetime independent of arq's own
+`job_timeout` (which only bounds a single submit/poll HTTP call).
 
-**Running Redis locally on Windows:** this machine has no Docker or WSL, so
-the recommended local Redis is **Memurai** — a native Windows service,
-Redis-protocol-compatible, installable via `winget install
-Memurai.MemuraiDeveloper` or download the MSI from
-[memurai.com](https://www.memurai.com/). Once installed, Redis runs as a
-Windows service on `127.0.0.1:6379` by default (`REDIS_URL=redis://127.0.0.1:6379`).
-Alternatively, Docker Desktop or a WSL2 distro with Redis can work too.
+`MockAIProvider` simulates this by encoding a "ready at" timestamp into its
+own `external_job_id` rather than sleeping inline (`MOCK_GENERATION_DELAY_SECONDS`,
+default 3s) — instant mock results would make the per-team lock
+unobservable by polling, and a sleep would put it back to blocking a
+worker slot, defeating the whole point. Swapping in a real provider means
+implementing `submit()`/`poll_result()` against that provider's actual API;
+nothing in `worker.py` changes.
+
+**Running Redis:** on a machine with Docker, the simplest option is
+`docker run -d --name shootpx-redis -p 6379:6379 --restart unless-stopped
+redis:7-alpine` — `REDIS_URL=redis://localhost:6379/0`. Without Docker/WSL,
+**Memurai** is the native-Windows-service alternative (Redis-protocol-compatible,
+`winget install Memurai.MemuraiDeveloper` or the MSI from
+[memurai.com](https://www.memurai.com/)), also on `127.0.0.1:6379` by
+default. Either way it needs to be running before the worker/API start —
+neither starts it for you.
 
 **Abstractions**, same pattern as auth/email — one interface, one local
 implementation, swap later without touching callers:
 - `core/storage.py` — `Storage` interface, `LocalStorage` writes to
   `STORAGE_ROOT_DIR`, served back at `/files/...` via `StaticFiles`. Swap
   for R2/S3 later.
-- `core/ai_provider.py` — `AIProvider` interface, `MockAIProvider` returns
-  a real tiny PNG instantly, proving the request -> job -> asset loop
-  without any real AI call or per-tool logic.
+- `core/ai_provider.py` — `AIProvider` interface (`submit`/`poll_result`),
+  `MockAIProvider` returns a real tiny PNG after a simulated delay, proving
+  the request -> job -> asset loop without any real AI call or per-tool
+  logic.
 
 **Permissions:** `core/permissions.py`'s `compute_permissions(role)` gates
 these — `can_upload_assets` and `can_generate`, both true for owner and

@@ -46,12 +46,27 @@ class Settings(BaseSettings):
     # one limits fairness *between* teams; this one limits total load).
     MAX_CONCURRENT_GENERATIONS: int = 10
 
-    # Artificial delay (seconds) the worker sleeps before calling
-    # MockAIProvider, since the mock itself returns instantly. Without this,
-    # the per-team lock has nothing to serialize that's slow enough to
-    # observe by polling. Set to 0 once a real (naturally slow) AI provider
-    # replaces the mock.
+    # How long MockAIProvider pretends a submitted job takes to finish
+    # (checked by the worker's poll, not slept inline — see AIProvider.submit
+    # / poll_result in core/ai_provider.py). Without this, the mock would
+    # resolve on the very first poll and there'd be nothing slow enough for
+    # the per-team lock to visibly serialize. Irrelevant once a real
+    # (naturally slow) provider replaces the mock.
     MOCK_GENERATION_DELAY_SECONDS: int = 3
+
+    # How often the worker re-checks a submitted job's status with the
+    # provider (app/worker.py, via arq's Retry — never a blocking sleep, so
+    # it costs nothing while waiting). Real providers bill/rate-limit polls,
+    # so don't set this too low against a real (non-mock) provider.
+    GENERATION_POLL_INTERVAL_SECONDS: int = 3
+
+    # Ceiling on how long one job may stay unresolved after being submitted
+    # to the provider before the worker gives up and marks it failed —
+    # protects against a provider job that silently never completes/never
+    # reports failure. Independent of arq's own job_timeout (WorkerSettings
+    # in worker.py), which bounds a single submit/poll HTTP call, not the
+    # job's total lifetime.
+    GENERATION_TIMEOUT_SECONDS: int = 600
 
     # Outgoing email (Resend SMTP) — sends the magic-link and team-invite
     # emails ourselves; Firebase never sends mail in this project.

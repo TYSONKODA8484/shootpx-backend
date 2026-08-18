@@ -35,6 +35,16 @@ class GenerationJob(Base):
     # no separate batches table, same lightweight-string pattern as
     # feature_type. Add an index if batch lookups ever get slow; skipped
     # for now (YAGNI at this scale).
+    external_job_id = Column(String, nullable=True)  # the aggregator's own
+    # job id (e.g. a fal.ai request id), set once app/worker.py has submitted
+    # this job — null beforehand. Presence of this column, not `status`, is
+    # what the worker uses to tell "not submitted yet" from "submitted,
+    # waiting on a poll" across separate arq retries of the same job.
+    provider = Column(String, nullable=True)  # which AIProvider handled this
+    # ("mock", "fal", "segmind", ...) — set alongside external_job_id. Needed
+    # because a later poll retry can land on a different worker process than
+    # the one that submitted; nothing about routing back to the right
+    # provider can live in that process's memory.
     input_payload = Column(JSON, default=dict, nullable=False)
     error = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
