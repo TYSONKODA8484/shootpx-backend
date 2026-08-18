@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.asset_lookup import get_assets_cached
 from app.core.permissions import compute_permissions, get_membership
 from app.core.queue import enqueue_generation_job
 from app.models.asset import Asset
@@ -123,11 +124,10 @@ async def run_generation_bulk(
 def _to_summaries(db: Session, jobs: list[GenerationJob]) -> list[GenerationJobSummary]:
     asset_ids = {j.source_asset_id for j in jobs if j.source_asset_id}
     asset_ids |= {j.output_asset_id for j in jobs if j.output_asset_id}
-    assets = (
-        {a.id: a for a in db.query(Asset).filter(Asset.id.in_(asset_ids)).all()}
-        if asset_ids
-        else {}
-    )
+    # Cached (core/asset_lookup.py, "media" namespace) — GET /jobs and GET
+    # /batches/{id} both land here and get polled repeatedly while a job
+    # is running, re-resolving the same source/output asset ids every time.
+    assets = get_assets_cached(db, asset_ids)
 
     def ref(asset_id: str | None) -> AssetRef | None:
         asset = assets.get(asset_id) if asset_id else None

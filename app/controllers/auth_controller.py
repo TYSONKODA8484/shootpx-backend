@@ -1,10 +1,11 @@
 from sqlalchemy.orm import Session
 
+from app.core import cache
 from app.core.config import settings
 from app.core.email import send_email
 from app.core.firebase import generate_email_sign_in_link
 from app.core.security import create_session_token
-from app.middleware.auth import COOKIE_NAME
+from app.middleware.auth import CACHE_NAMESPACE, COOKIE_NAME
 from app.models.user import User
 
 
@@ -60,6 +61,14 @@ def upsert_user_from_firebase(db: Session, decoded_token: dict) -> User:
 
     db.commit()
     db.refresh(user)
+
+    # Invalidate rather than wait out LOGIN_CACHE_TTL_SECONDS — this is the
+    # one place a User row's cached fields (email/name/avatar_url) can
+    # actually change, and it happens right at sign-in, so the very next
+    # request (this session) should see the fresh row, not a stale one
+    # cached from before this upsert.
+    cache.delete(CACHE_NAMESPACE, user.id)
+
     return user
 
 

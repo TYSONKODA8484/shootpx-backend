@@ -369,6 +369,49 @@ image download + `Asset` creation) verified by feeding `_poll_import` a
 synthetic successful result pointing at a real HTTP URL, since asserting
 against a live third-party product page in a test isn't stable.
 
+## Caching — `core/cache.py`
+
+A generic namespaced read-through cache on the same Redis instance
+already backing the arq queue and per-team lock. A namespace is just a
+key prefix (`cache:<namespace>:<key>`), so one can be cleared
+(`clear_namespace()`, SCAN-based, doesn't block Redis) without touching
+another's data — that's the entire reason it's not one flat cache. Adding
+a namespace later (a feed cache, say, whenever a feed feature actually
+exists) needs nothing here; a caller just starts passing a new namespace
+string. Sync client, matching the rest of this codebase's sync DB layer.
+
+Two namespaces wired in today:
+- **`login`** (`middleware/auth.py`) — caches the `User` row
+  `get_current_user` otherwise fetches on *every* authenticated request.
+  `LOGIN_CACHE_TTL_SECONDS` (60s) bounds staleness for anything the TTL
+  alone would need to catch; the one write path that can actually change
+  a cached field (`auth_controller.upsert_user_from_firebase`, on
+  sign-in) invalidates immediately rather than waiting it out.
+- **`media`** (`core/asset_lookup.py`) — caches `Asset` row lookups.
+  `GET /jobs`/`GET /batches/{id}` get polled repeatedly while a job runs,
+  re-resolving the same source/output asset ids every poll.
+  `MEDIA_CACHE_TTL_SECONDS` (300s, longer than login's) needs no
+  write-path invalidation: assets are effectively immutable once created
+  (no update/delete endpoint exists anywhere in this app). `get_assets_cached()`
+  stays batch-aware on a miss — checks the cache per id, then one `IN (...)`
+  query for whatever's missing, never N individual queries.
+
+Cached values are plain JSON dicts, not ORM instances, converted on both
+sides of the cache (`_to_cache`/`_from_cache` in each caller) — a cached
+SQLAlchemy instance would be detached from any `Session`, and
+`Model(**dict)` only stays safe to read from as long as nothing touches a
+relationship on it (documented at each call site; every current caller
+only reads plain columns, never `.memberships` or similar).
+
+Verified with a poison test for each namespace, not just "the code looks
+right": populate the cache, overwrite the cached value directly in Redis
+to something the database does *not* have (a fake email/name, a fake
+asset URL), confirm the API actually returns the poisoned value (proving
+it's genuinely being read from cache, not silently bypassed), then
+`cache.delete()`/invalidate and confirm the real value comes back. Also
+verified `clear_namespace('login')` deletes only that namespace's keys,
+leaving `media`'s untouched.
+
 ## Explicitly out of scope for now
 
 - File/media storage (R2, S3, Supabase, etc.)

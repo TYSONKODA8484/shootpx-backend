@@ -79,6 +79,24 @@ class Settings(BaseSettings):
     # tops out around 25s; this is a generous ceiling above that, not a
     # tuned value — mirrors GENERATION_TIMEOUT_SECONDS's role for jobs.
 
+    # Read-through caches (core/cache.py) — namespaced by concern so one
+    # can be cleared without touching another. Short TTLs, not "cache
+    # forever": correctness matters more than hit rate here.
+    LOGIN_CACHE_TTL_SECONDS: int = 60  # caches the User row lookup that
+    # get_current_user (middleware/auth.py) otherwise runs on every single
+    # authenticated request. Short on purpose — a deleted/suspended user
+    # should stop working within this long, not indefinitely. Also
+    # explicitly invalidated the moment a user's row actually changes
+    # (auth_controller.upsert_user_from_firebase), so this TTL is a ceiling
+    # on staleness, not the only thing keeping it correct.
+    MEDIA_CACHE_TTL_SECONDS: int = 300  # caches Asset row lookups
+    # (core/asset_lookup.py), used wherever a job/batch response resolves
+    # source/output asset ids — GET /jobs and GET /batches/{id} get polled
+    # repeatedly while a job is running, re-resolving the same asset rows
+    # every time. Safe to cache longer than the login cache: assets are
+    # effectively immutable once created (no update/delete endpoint exists),
+    # so there's no write path that needs to invalidate this.
+
     # Outgoing email (Resend SMTP) — sends the magic-link and team-invite
     # emails ourselves; Firebase never sends mail in this project.
     SMTP_HOST: str = "smtp.gmail.com"
