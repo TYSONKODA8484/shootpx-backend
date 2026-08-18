@@ -81,6 +81,27 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
 </section>
 
 <section>
+  <h2>4. Bulk generation &amp; job status</h2>
+  <p style="color:#666;font-size:13px;margin:0 0 8px;">Queued via arq + Redis — a worker process must be running (<code>python -m arq app.worker.WorkerSettings</code>) or these will sit in "processing" forever.</p>
+  <div class="row">
+    <input id="bulk-team-id-input" placeholder="team_id" size="24" />
+    <input id="bulk-feature-type-input" placeholder="feature_type e.g. on_model_shots" size="20" />
+  </div>
+  <div class="row">
+    <input id="bulk-asset-ids-input" placeholder="asset_ids, comma-separated" size="60" />
+    <button id="generate-bulk-btn">Generate bulk</button>
+  </div>
+  <div class="row">
+    <input id="jobs-ids-input" placeholder="job ids, comma-separated (auto-filled after Generate / Generate bulk)" size="60" />
+    <button id="get-jobs-btn">GET /jobs</button>
+  </div>
+  <div class="row">
+    <input id="batch-id-input" placeholder="batch_id (auto-filled after Generate bulk)" size="36" />
+    <button id="get-batch-btn">GET /batches/:batch_id</button>
+  </div>
+</section>
+
+<section>
   <h2>Log</h2>
   <pre id="log">(responses show up here)</pre>
 </section>
@@ -237,7 +258,39 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ team_id, feature_type, source_asset_id, input_payload: {} }),
     });
-    log("POST /generate", await res.json());
+    const data = await res.json();
+    log("POST /generate", data);
+    // convenience: carry the new job id straight into the jobs field below
+    if (data.id) document.getElementById("jobs-ids-input").value = data.id;
+  };
+
+  document.getElementById("generate-bulk-btn").onclick = async () => {
+    const team_id = document.getElementById("bulk-team-id-input").value;
+    const feature_type = document.getElementById("bulk-feature-type-input").value;
+    const asset_ids = document.getElementById("bulk-asset-ids-input").value
+      .split(",").map((s) => s.trim()).filter(Boolean);
+    const res = await fetch(`${BACKEND_URL}/generate/bulk`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id, feature_type, asset_ids, input_payload: {} }),
+    });
+    const data = await res.json();
+    log("POST /generate/bulk", data);
+    // convenience: carry batch_id + job_ids straight into the fields below
+    if (data.batch_id) document.getElementById("batch-id-input").value = data.batch_id;
+    if (data.job_ids) document.getElementById("jobs-ids-input").value = data.job_ids.join(",");
+  };
+
+  document.getElementById("get-jobs-btn").onclick = async () => {
+    const ids = document.getElementById("jobs-ids-input").value;
+    const res = await fetch(`${BACKEND_URL}/jobs?ids=${encodeURIComponent(ids)}`, { credentials: "include" });
+    log("GET /jobs", await res.json());
+  };
+
+  document.getElementById("get-batch-btn").onclick = async () => {
+    const batchId = document.getElementById("batch-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/batches/${batchId}`, { credentials: "include" });
+    log("GET /batches/:batch_id", await res.json());
   };
 </script>
 
