@@ -8,6 +8,7 @@ from app.middleware.setup import register_middleware
 from app.models import asset as asset_models  # noqa: F401  (registers Asset on Base)
 from app.models import generation_job as generation_job_models  # noqa: F401  (registers GenerationJob on Base)
 from app.models import invite as invite_models  # noqa: F401  (registers TeamInvite on Base)
+from app.models import product_import as product_import_models  # noqa: F401  (registers ProductImport on Base)
 from app.models import team as team_models  # noqa: F401  (registers Team/TeamMembership on Base)
 from app.models import user as user_models  # noqa: F401  (registers User on Base)
 # Every model above still needs importing here even though schema itself is
@@ -20,6 +21,7 @@ from app.routes.asset_routes import router as asset_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
+from app.routes.product_import_routes import router as product_import_router
 from app.routes.team_routes import router as teams_router
 
 init_firebase()
@@ -36,6 +38,7 @@ app.include_router(auth_router)
 app.include_router(teams_router)
 app.include_router(asset_router)
 app.include_router(generation_router)
+app.include_router(product_import_router)
 
 
 @app.get("/")

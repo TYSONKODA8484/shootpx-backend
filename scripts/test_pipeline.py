@@ -21,11 +21,14 @@ from app.core.db import SessionLocal  # noqa: E402
 from app.core.security import create_session_token  # noqa: E402
 
 # Registers every mapped class on Base before any mapper gets configured —
-# same reason app/main.py imports all five model modules up front. Team.invites
-# references "TeamInvite" by name, so without this import mapper configuration
-# throws InvalidRequestError the moment any of the models below are touched.
+# same reason app/main.py imports all six model modules up front. Team.invites
+# references "TeamInvite" by name and Asset.product_import references
+# "ProductImport" by name, so without these imports mapper configuration
+# throws InvalidRequestError/NoReferencedTableError the moment any of the
+# models below are touched.
 from app.models import generation_job as generation_job_models  # noqa: E402,F401
 from app.models import invite as invite_models  # noqa: E402,F401
+from app.models import product_import as product_import_models  # noqa: E402,F401
 from app.models.asset import Asset, AssetKind, MediaType  # noqa: E402
 from app.models.team import Team, TeamMembership, TeamRole, new_id  # noqa: E402
 from app.models.user import User  # noqa: E402

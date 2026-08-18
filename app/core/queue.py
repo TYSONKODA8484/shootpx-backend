@@ -1,8 +1,8 @@
-"""arq connection pool used by the API process to enqueue generation jobs.
-One pool per process, lazily created on first use and reused after —
-same lazy-singleton pattern as the AI provider/storage modules. The worker
-process (app/worker.py) never imports this file; it gets its own
-connection via arq's WorkerSettings.
+"""arq connection pool used by the API process to enqueue generation jobs
+and product imports. One pool per process, lazily created on first use and
+reused after — same lazy-singleton pattern as the AI provider/storage
+modules. The worker process (app/worker.py) never imports this file; it
+gets its own connection via arq's WorkerSettings.
 """
 
 from arq import create_pool
@@ -26,3 +26,11 @@ async def enqueue_generation_job(job_id: str, team_id: str) -> None:
     team's per-team lock is free and a global worker slot is available."""
     pool = await get_queue_pool()
     await pool.enqueue_job("run_generation_job", job_id, team_id)
+
+
+async def enqueue_product_import(import_id: str) -> None:
+    """Same fire-and-forget shape as enqueue_generation_job. The actual
+    scrape happens later, in app/worker.py's run_product_import, once a
+    global worker slot is available — no per-team lock for imports."""
+    pool = await get_queue_pool()
+    await pool.enqueue_job("run_product_import", import_id)

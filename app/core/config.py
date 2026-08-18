@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     # job's total lifetime.
     GENERATION_TIMEOUT_SECONDS: int = 600
 
+    # product-scrapper service (separate repo/process — see
+    # core/product_scraper_client.py) — turns a product URL into
+    # name/description/price/theme/images. Its own submit/poll HTTP API,
+    # same shape as AIProvider, run separately: `uvicorn service:app --port
+    # 8501` from that repo.
+    PRODUCT_SCRAPER_URL: str = "http://localhost:8501"
+    PRODUCT_IMPORT_POLL_INTERVAL_SECONDS: int = 2
+    PRODUCT_IMPORT_TIMEOUT_SECONDS: int = 120  # extract_product() itself
+    # tops out around 25s; this is a generous ceiling above that, not a
+    # tuned value — mirrors GENERATION_TIMEOUT_SECONDS's role for jobs.
+
     # Outgoing email (Resend SMTP) — sends the magic-link and team-invite
     # emails ourselves; Firebase never sends mail in this project.
     SMTP_HOST: str = "smtp.gmail.com"

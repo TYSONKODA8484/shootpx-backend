@@ -32,7 +32,8 @@ Resend (SMTP) · local disk storage (swappable later for R2/S3)
 ```
 app/
   core/         config, DB connection, session-cookie signing,
-                Firebase Admin SDK, storage + AI-provider abstractions
+                Firebase Admin SDK, storage + AI-provider abstractions,
+                product-scrapper client
   tools/        the feature_type registry — one file per tool (see
                 DESIGN.md's "Tool registry" section)
   middleware/   the login gate (get_current_user), CORS setup
@@ -89,25 +90,40 @@ cp .env.example .env
 | `FIREBASE_SERVICE_ACCOUNT_PATH` | Firebase Console → Project Settings → Service Accounts → *Generate new private key*. Save the downloaded JSON as `backend/firebase-service-account.json` (gitignored) |
 | `SMTP_*` | [Resend](https://resend.com) → API Keys → *Create API Key*. `SMTP_PASSWORD` is the `re_...` key |
 | `REDIS_URL` | your local Redis — see `DESIGN.md` for how to get one running on Windows |
+| `PRODUCT_SCRAPER_URL` | where the `product-scrapper` service is running (see step 5) — only needed for `/product-imports` |
 
 **4. Firebase sign-in methods**
 
 In Firebase Console → Authentication → Sign-in method, enable **Google**
 and **Email link (passwordless)**.
 
+**5. product-scrapper (optional — only for `/product-imports`)**
+
+Separate repo (`../product-scrapper`), separate process. From that repo:
+```bash
+pip install -r requirements.txt
+playwright install chromium
+uvicorn service:app --port 8501
+```
+See `DESIGN.md`'s "Product imports" section for why it's a separate
+service rather than imported into this backend.
+
 ## Running it
 
 This now needs **two processes** — the API and the arq worker that
-actually runs generation jobs. Start Redis first (see `DESIGN.md` for how
-to get one running locally on Windows), then:
+actually runs generation jobs *and* product imports. Start Redis first
+(see `DESIGN.md` for how to get one running locally on Windows), then:
 
 ```bash
 # terminal 1 — the API
 uvicorn app.main:app --reload
 
-# terminal 2 — the worker (processes queued /generate and /generate/bulk jobs)
+# terminal 2 — the worker (processes queued /generate, /generate/bulk, and /product-imports jobs)
 ./venv/Scripts/python.exe -m arq app.worker.WorkerSettings
 ```
+
+`/product-imports` additionally needs the product-scrapper service (step
+5 above) running — everything else works without it.
 
 The API is now at `http://localhost:8000`, with interactive docs (every
 route, "Try it out" buttons, even a file picker for uploads) at
@@ -143,6 +159,8 @@ are served from `localhost`.
 | `POST /generate/bulk` | run a tool on up to 100 assets at once: `team_id`, `feature_type`, `asset_ids`, `input_payload` — returns a `batch_id` + all job ids immediately |
 | `GET /jobs?ids=...` | poll one or many jobs by comma-separated id |
 | `GET /batches/{batch_id}` | poll a bulk submission's aggregate + per-job status |
+| `POST /product-imports` | scrape a product URL: `team_id`, `url` — enqueued, returns immediately |
+| `GET /product-imports/{id}` | poll status; once done, includes name/description/brand/price/theme colors + every scraped image as a real asset |
 
 Full request/response shapes are in `/docs`, not duplicated here — this
 table is just so you know what exists before opening it.

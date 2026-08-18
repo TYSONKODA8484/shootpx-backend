@@ -312,6 +312,59 @@ these — `can_upload_assets` and `can_generate`, both true for owner and
 editor today. Never a hardcoded `role == "owner"` check outside that one
 file; `can_manage_team` (owner-only) is the one exception.
 
+## Product imports — scraping a product URL into real assets
+
+**`product-scrapper`** (sibling repo, `../product-scrapper`) turns a
+product page URL into name/description/brand/price/theme colors and a
+list of image URLs — its own `extract_product()` (`extractor.py`),
+already independently tested (25 offline tests). It's a Python library,
+not a service, and its call blocks for 2-25s (sometimes launching a real
+headless Chromium) — the exact shape `AIProvider` was built to avoid
+calling directly, so it doesn't get imported into this backend. Instead:
+
+- **`product-scrapper/service.py`** — a small FastAPI wrapper added
+  specifically for this integration, giving `extract_product()` the same
+  submit/poll HTTP shape as `AIProvider`: `POST /extract {url}` returns a
+  job id immediately (runs the actual scrape on a bounded thread pool,
+  `MAX_CONCURRENT_SCRAPES`, so concurrent requests don't launch unbounded
+  Chromium instances), `GET /extract/{id}` polls `{status, result}`. Run
+  separately: `uvicorn service:app --port 8501` (after `pip install -r
+  requirements.txt && playwright install chromium` in that repo).
+- **`core/product_scraper_client.py`** (this repo) — thin `submit()`/
+  `poll()` client for that service, same pattern as `AIProvider`, but
+  *not* an `AIProvider` itself: a product import's output (several images
+  + structured data) doesn't fit `GenerationResult`'s one-image shape.
+- **`ProductImport`** (`models/product_import.py`) — its own table, not
+  bolted onto `GenerationJob`: `status`, `external_job_id` (the scraper
+  service's own job id), promoted fields (`product_name`, `price`, ...),
+  and `raw_result` (the scraper's full result, verbatim, nothing lost even
+  though only some fields get their own column).
+- **`app/worker.py`'s `run_product_import`** — identical submit/poll/Retry
+  shape to `run_generation_job`, against `ProductImport` instead of
+  `GenerationJob` and `product_scraper_client` instead of `AIProvider`.
+  No per-team lock (nothing about scraping needs one team's imports
+  serialized) — shares the same global `max_jobs` pool as generation for
+  now, not a dedicated cap; splitting them is a reasonable thing to do
+  once real traffic shows it's needed. Once the scrape itself succeeds,
+  each of its (up to `MAX_IMPORTED_IMAGES`, currently 20) image URLs gets
+  downloaded and saved as a real `Asset` (`kind="imported"`,
+  `product_import_id` set) via the same `Storage` abstraction generation
+  output already goes through — so a scraped image is immediately usable
+  as `source_asset_id` for `/generate`, same as an upload.
+- **Routes:** `POST /product-imports` (`team_id`, `url`), `GET
+  /product-imports/{id}` — same "create it, poll it" shape as generation,
+  gated on `can_upload_assets` (a scraped image is conceptually an upload,
+  not a generation).
+
+A scrape that doesn't reach `status: "ok"` (blocked, not_a_product,
+unreachable, ...) marks the `ProductImport` failed with the scraper's own
+message — verified end to end with a real unreachable-domain URL through
+the full stack (API -> queue -> worker -> scraper client -> wrapper
+service -> `extract_product()` -> back), and the success path (metadata +
+image download + `Asset` creation) verified by feeding `_poll_import` a
+synthetic successful result pointing at a real HTTP URL, since asserting
+against a live third-party product page in a test isn't stable.
+
 ## Explicitly out of scope for now
 
 - File/media storage (R2, S3, Supabase, etc.)

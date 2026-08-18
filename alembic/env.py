@@ -22,6 +22,7 @@ from app.core.db import Base, engine  # noqa: E402
 from app.models import asset as asset_models  # noqa: E402,F401
 from app.models import generation_job as generation_job_models  # noqa: E402,F401
 from app.models import invite as invite_models  # noqa: E402,F401
+from app.models import product_import as product_import_models  # noqa: E402,F401
 from app.models import team as team_models  # noqa: E402,F401
 from app.models import user as user_models  # noqa: E402,F401
 
