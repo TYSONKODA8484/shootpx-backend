@@ -271,6 +271,10 @@ module so this happens once, at startup. This is the actual seam for "23
 tools, each maybe a different aggregator": adding a tool is one new file
 in `app/tools/`, imported from `__init__.py` — not a change to
 `worker.py`, `registry.py`, `generation_controller.py`, or the schemas.
+`app/tools/_template.py` is a copy-paste starting point for that one new
+file (leading `_` so it's never itself auto-imported/registered) — the
+mechanical steps are literally copy it, fill in four fields, add one
+import line, done.
 Once a tool has real per-provider request/response logic (mapping generic
 `input_payload` to that provider's actual request shape, and its response
 back to `GenerationResult`), that logic lives in that tool's own file too
