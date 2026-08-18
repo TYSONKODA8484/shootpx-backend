@@ -2,14 +2,17 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.tools import known_feature_types
 from app.models.asset import MediaType
 from app.models.generation_job import JobStatus
 
 
-def _not_blank(v: str) -> str:
+def _known_feature_type(v: str) -> str:
     v = v.strip()
     if not v:
         raise ValueError("feature_type cannot be blank")
+    if v not in known_feature_types():
+        raise ValueError(f"unknown feature_type {v!r} — known: {', '.join(known_feature_types())}")
     return v
 
 
@@ -21,8 +24,8 @@ class GenerateRequest(BaseModel):
 
     @field_validator("feature_type")
     @classmethod
-    def feature_type_not_blank(cls, v: str) -> str:
-        return _not_blank(v)
+    def feature_type_known(cls, v: str) -> str:
+        return _known_feature_type(v)
 
 
 class GenerationJobOut(BaseModel):
@@ -47,8 +50,8 @@ class BulkGenerateRequest(BaseModel):
 
     @field_validator("feature_type")
     @classmethod
-    def feature_type_not_blank(cls, v: str) -> str:
-        return _not_blank(v)
+    def feature_type_known(cls, v: str) -> str:
+        return _known_feature_type(v)
 
 
 class BulkGenerateResponse(BaseModel):

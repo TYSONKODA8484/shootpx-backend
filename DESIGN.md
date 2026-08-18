@@ -204,7 +204,7 @@ scoped straight to a team.
 | id | uuid, PK |
 | team_id | FK -> teams.id — who can access it |
 | created_by | FK -> users.id — who ran it |
-| feature_type | plain string — the future dispatch key for which of the 23 tools' logic runs; today every value hits the same `MockAIProvider` |
+| feature_type | plain string — must be a key in `core/tools.py`'s `TOOLS` registry (enforced in `schemas/generation.py`, unknown values are rejected with a 422 before a job is ever created); each entry says which `AIProvider` instance runs that tool |
 | status | `'queued'` \| `'processing'` \| `'done'` \| `'failed'` |
 | source_asset_id, output_asset_id | FK -> assets.id, both nullable |
 | external_job_id, provider | the aggregator's own job id + which `AIProvider` handled it, both null until submitted — see "Submit/poll, not one blocking call" below |
@@ -259,6 +259,23 @@ unobservable by polling, and a sleep would put it back to blocking a
 worker slot, defeating the whole point. Swapping in a real provider means
 implementing `submit()`/`poll_result()` against that provider's actual API;
 nothing in `worker.py` changes.
+
+**Tool registry (`core/tools.py`).** A job's `feature_type` doesn't call
+`AIProvider` directly — `app/worker.py` looks it up in the `TOOLS` dict
+first, and calls whichever `ToolSpec.provider` that entry names. This is
+the actual seam for "23 tools, each maybe a different aggregator": adding
+a tool is one `ToolSpec` entry (`feature_type`, `display_name`,
+`output_media_type`, `provider`), not a change to `worker.py`,
+`generation_controller.py`, or the schemas. Every entry today points at
+the same `MockAIProvider` — there's no real provider adapter yet — but two
+tools (`on_model_shots`, `ugc`) are registered and dispatch through it for
+real, proven against a live server (`scripts/test_pipeline.py` plus a
+one-off HTTP check that an unregistered `feature_type` gets a 422 and
+`ugc` runs end to end). `output_media_type` isn't cross-checked against
+what the provider actually returns yet (there's only ever been one mock
+result shape to check against) — worth adding once a video-capable
+provider exists, so a misconfigured adapter fails loudly instead of
+quietly mislabeling an asset.
 
 **Running Redis:** on a machine with Docker, the simplest option is
 `docker run -d --name shootpx-redis -p 6379:6379 --restart unless-stopped

@@ -15,11 +15,17 @@ If the per-team lock is held by someone else, the job re-queues itself via
 arq's Retry rather than blocking — so a job waiting on someone else's lock
 does not tie up one of the global max_jobs slots while it waits.
 
+Which AIProvider instance actually runs a job is looked up per job from
+app/core/tools.py's TOOLS registry, keyed by feature_type — not a single
+hardcoded provider. Different tools can point at different providers (or
+share one) without this file changing.
+
 Submitting to and polling the AI provider (app/core/ai_provider.py) works
-the same way: a real aggregator (fal.ai, Segmind, ...) takes seconds to
-minutes to actually generate something, so run_generation_job never blocks
-waiting for that. One invocation does exactly one fast thing — submit the
-job, or check its status once — and if the provider isn't done yet, the
+the same way regardless of which provider a tool resolves to: a real
+aggregator (fal.ai, Segmind, ...) takes seconds to minutes to actually
+generate something, so run_generation_job never blocks waiting for that.
+One invocation does exactly one fast thing — submit the job, or check its
+status once — and if the provider isn't done yet, the
 job requeues itself via Retry(defer=GENERATION_POLL_INTERVAL_SECONDS) and
 gives up its worker slot in the meantime, same as the lock-wait case. This
 means one job's total lifetime (submit -> N polls -> done) can span many
@@ -37,10 +43,11 @@ from arq.connections import RedisSettings
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session
 
-from app.core.ai_provider import GenerationFailed, GenerationHandle, GenerationPending, ai_provider
+from app.core.ai_provider import GenerationFailed, GenerationHandle, GenerationPending
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.storage import storage
+from app.core.tools import get_tool
 from app.models.asset import Asset, AssetKind
 from app.models.generation_job import GenerationJob, JobStatus
 from app.models.team import new_id
@@ -129,9 +136,21 @@ async def _process_job(job_id: str) -> bool:
 
 
 def _submit(db: Session, job: GenerationJob) -> bool:
+    tool = get_tool(job.feature_type)
+    if tool is None:
+        # Defense in depth: the API layer (schemas/generation.py) already
+        # rejects unknown feature_type before a job is created, but the
+        # registry is checked again here in case a job somehow reaches the
+        # worker for a feature_type that's since been removed from it.
+        job.status = JobStatus.failed.value
+        job.error = f"Unknown feature_type: {job.feature_type!r}"
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return False
+
     source_asset = db.get(Asset, job.source_asset_id) if job.source_asset_id else None
     try:
-        handle = ai_provider.submit(
+        handle = tool.provider.submit(
             feature_type=job.feature_type,
             source_asset_url=source_asset.url if source_asset else None,
             input_payload=job.input_payload,
@@ -150,9 +169,17 @@ def _submit(db: Session, job: GenerationJob) -> bool:
 
 
 def _poll(db: Session, job: GenerationJob) -> bool:
+    tool = get_tool(job.feature_type)
+    if tool is None:
+        job.status = JobStatus.failed.value
+        job.error = f"Unknown feature_type: {job.feature_type!r}"
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return False
+
     handle = GenerationHandle(external_job_id=job.external_job_id, provider=job.provider)
     try:
-        result = ai_provider.poll_result(handle)
+        result = tool.provider.poll_result(handle)
     except GenerationPending:
         return True
     except GenerationFailed as exc:
