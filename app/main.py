@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.core.db import Base, engine
 from app.core.firebase import init_firebase
 from app.core.storage import storage  # noqa: F401  (import creates STORAGE_ROOT_DIR before we mount it below)
 from app.middleware.setup import register_middleware
@@ -11,13 +10,18 @@ from app.models import generation_job as generation_job_models  # noqa: F401  (r
 from app.models import invite as invite_models  # noqa: F401  (registers TeamInvite on Base)
 from app.models import team as team_models  # noqa: F401  (registers Team/TeamMembership on Base)
 from app.models import user as user_models  # noqa: F401  (registers User on Base)
+# Every model above still needs importing here even though schema itself is
+# now Alembic's job (alembic/ — run `alembic upgrade head` before starting
+# the app, not something main.py does for you): SQLAlchemy needs every
+# mapped class registered on Base before mapper configuration runs, since
+# relationships reference each other by string (e.g. Team.invites ->
+# "TeamInvite"), same reason app/worker.py imports a couple of these too.
 from app.routes.asset_routes import router as asset_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
 from app.routes.team_routes import router as teams_router
 
-Base.metadata.create_all(bind=engine)
 init_firebase()
 
 app = FastAPI(title=settings.APP_NAME)

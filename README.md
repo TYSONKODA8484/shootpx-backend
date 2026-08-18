@@ -57,8 +57,20 @@ pip install -r requirements.txt
 
 **2. Postgres**
 
-Create a local database called `shootpx`. Tables are created automatically
-from the SQLAlchemy models on first run — no migrations to run.
+Create a local database called `shootpx`, then apply migrations:
+```bash
+alembic upgrade head
+```
+Schema is managed by Alembic — models alone don't create/alter tables
+anymore. After changing a model in `app/models/`, generate a migration and
+apply it:
+```bash
+alembic revision --autogenerate -m "describe the change"
+alembic upgrade head
+```
+Always read the generated file in `alembic/versions/` before running
+`upgrade` — autogenerate is a diff, not a guarantee; it can miss things
+(e.g. renames look like a drop + add) or include things you didn't intend.
 
 **3. Environment variables**
 

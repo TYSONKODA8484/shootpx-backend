@@ -99,6 +99,17 @@ and there's no real frontend yet to show that message in.
 
 ## Schema
 
+Managed by Alembic (`alembic/`) — `alembic upgrade head` applies migrations,
+`alembic revision --autogenerate -m "..."` generates one after a model
+change. `app/main.py` no longer calls `Base.metadata.create_all()`; it did
+until the generation-pipeline work landed a model change (`batch_id`, then
+`external_job_id`/`provider` on `GenerationJob`) that `create_all` can't
+apply to an already-existing table (it only creates missing tables, never
+alters existing ones) — hit twice in one sitting, hence Alembic now instead
+of before. `alembic/env.py` imports `app.core.db.engine` directly rather
+than building a second connection from `alembic.ini`, so `DATABASE_URL` in
+`.env` stays the one place that's actually configured.
+
 **users** — one row per person, id is the Firebase `uid`.
 | column | notes |
 |---|---|
