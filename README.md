@@ -22,6 +22,12 @@ See [`DESIGN.md`](./DESIGN.md) for the full architecture writeup — schema,
 auth flow, and the reasoning behind the bigger decisions. This file is just
 setup and day-to-day usage.
 
+New to the codebase? Read **[`docs/BOOK.md`](./docs/BOOK.md)** — a complete
+beginner-to-advanced walkthrough of every part of this backend, in the order
+it was built, including what each piece replaced and why. It's append-only:
+whenever you change the code, add to it rather than rewriting it (see its
+"How to Append to This Book" appendix).
+
 ## Stack
 
 Python / FastAPI · PostgreSQL · SQLAlchemy · Firebase Authentication ·
