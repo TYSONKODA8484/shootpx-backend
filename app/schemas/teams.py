@@ -15,6 +15,18 @@ class TeamCreate(BaseModel):
         return v
 
 
+class TeamUpdate(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name cannot be blank")
+        return v
+
+
 class TeamOut(BaseModel):
     id: str
     name: str

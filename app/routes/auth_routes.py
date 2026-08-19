@@ -28,7 +28,9 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
     emailed magic link. We verify it, upsert the user, pull in any pending
     team invites for their email, and set our own session cookie."""
     decoded = verify_id_token(payload.id_token)
-    user = auth_controller.upsert_user_from_firebase(db, decoded)
+    user, is_new = auth_controller.upsert_user_from_firebase(db, decoded)
+    if is_new:
+        team_controller.create_personal_team(db, user)
     team_controller.accept_pending_invites(db, user)
 
     response = JSONResponse(UserOut.model_validate(user).model_dump())

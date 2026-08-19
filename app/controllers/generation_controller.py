@@ -9,6 +9,7 @@ from app.core.queue import enqueue_generation_job
 from app.models.asset import Asset
 from app.models.generation_job import GenerationJob, JobStatus
 from app.models.team import TeamMembership, new_id
+from app.models.tool import Tool
 from app.models.user import User
 from app.schemas.generation import (
     AssetRef,
@@ -20,10 +21,24 @@ from app.schemas.generation import (
 )
 
 
+def _check_tool_active(db: Session, feature_type: str) -> None:
+    """schemas/generation.py already rejects an unknown feature_type (422,
+    checked against the CODE registry). This is a separate, DB-side check —
+    is a genuinely real tool currently switched off (Tool.is_active) — so a
+    tool can be disabled without a redeploy. Fails OPEN if the row is
+    somehow missing (defensive — code-registry existence is still the hard
+    requirement enforced at the schema layer), fails CLOSED only on an
+    explicit is_active=False."""
+    tool_row = db.get(Tool, feature_type)
+    if tool_row is not None and not tool_row.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Tool {feature_type!r} is currently disabled")
+
+
 async def run_generation(db: Session, current_user: User, payload: GenerateRequest) -> GenerationJob:
     membership = get_membership(db, payload.team_id, current_user.id)
     if not compute_permissions(membership.role).can_generate:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to generate on this team")
+    _check_tool_active(db, payload.feature_type)
 
     source_asset = None
     if payload.source_asset_id:
@@ -68,6 +83,7 @@ async def run_generation_bulk(
     membership = get_membership(db, payload.team_id, current_user.id)
     if not compute_permissions(membership.role).can_generate:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to generate on this team")
+    _check_tool_active(db, payload.feature_type)
 
     found = (
         db.query(Asset)

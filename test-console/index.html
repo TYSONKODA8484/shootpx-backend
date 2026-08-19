@@ -42,15 +42,22 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
 
 <section>
   <h2>2. Teams</h2>
+  <p style="color:#666;font-size:13px;margin:0 0 8px;">You already have a team the moment you sign in — a personal workspace
+  is created automatically on first-ever sign-in. team_id fields below auto-fill with it. Create/rename here are optional,
+  for a second team (e.g. a client's) or renaming your own.</p>
   <div class="row">
     <input id="team-name-input" placeholder="Team name" size="20" />
     <button id="create-team-btn">Create team</button>
     <button id="list-teams-btn">List my teams</button>
   </div>
   <div class="row">
-    <input id="team-id-input" placeholder="team_id (paste from above)" size="36" />
+    <input id="team-id-input" placeholder="team_id (auto-filled after sign-in)" size="36" />
     <button id="list-members-btn">List members</button>
     <button id="list-invites-btn">List pending invites</button>
+  </div>
+  <div class="row">
+    <input id="rename-team-name-input" placeholder="New team name" size="20" />
+    <button id="rename-team-btn">Rename team (uses team_id above)</button>
   </div>
   <div class="row">
     <input id="invite-email-input" type="email" placeholder="invite@example.com" size="24" />
@@ -66,7 +73,7 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
   <h2>3. Assets &amp; Generation</h2>
   <p style="color:#666;font-size:13px;margin:0 0 8px;">No project step — assets and jobs live directly on a team.</p>
   <div class="row">
-    <input id="asset-team-id-input" placeholder="team_id (paste from section 2)" size="36" />
+    <input id="asset-team-id-input" placeholder="team_id (auto-filled after sign-in)" size="36" />
     <input id="asset-file-input" type="file" />
     <button id="upload-asset-btn">Upload asset</button>
   </div>
@@ -98,6 +105,23 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
   <div class="row">
     <input id="batch-id-input" placeholder="batch_id (auto-filled after Generate bulk)" size="36" />
     <button id="get-batch-btn">GET /batches/:batch_id</button>
+  </div>
+</section>
+
+<section>
+  <h2>5. Tools</h2>
+  <div class="row">
+    <button id="list-tools-btn">GET /tools</button>
+  </div>
+</section>
+
+<section>
+  <h2>6. Cache (dev tools)</h2>
+  <p style="color:#666;font-size:13px;margin:0 0 8px;">Only works when the API's ENV=development — 404s otherwise.</p>
+  <div class="row">
+    <button id="clear-login-cache-btn">Clear login cache</button>
+    <button id="clear-media-cache-btn">Clear media cache</button>
+    <button id="clear-all-cache-btn">Clear all caches</button>
   </div>
 </section>
 
@@ -140,6 +164,21 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
       body: JSON.stringify({ id_token }),
     });
     log("POST /auth/session", await res.json());
+    await fillDefaultTeamId();
+  }
+
+  // Every sign-in gets a personal team automatically now — this pulls
+  // GET /teams (oldest-first, so index 0 is always that personal team) and
+  // pre-fills every team_id field with it, so you never have to copy-paste
+  // an id by hand before trying anything else. Still fully overridable.
+  async function fillDefaultTeamId() {
+    const res = await fetch(`${BACKEND_URL}/teams`, { credentials: "include" });
+    if (!res.ok) return;
+    const teams = await res.json();
+    if (!teams.length) return;
+    const teamId = teams[0].id;
+    ["team-id-input", "asset-team-id-input", "generate-team-id-input", "bulk-team-id-input"]
+      .forEach((id) => { document.getElementById(id).value = teamId; });
   }
 
   document.getElementById("google-btn").onclick = async () => {
@@ -184,6 +223,7 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
   document.getElementById("me-btn").onclick = async () => {
     const res = await fetch(`${BACKEND_URL}/auth/me`, { credentials: "include" });
     log("GET /auth/me", await res.json());
+    if (res.ok) await fillDefaultTeamId();
   };
 
   document.getElementById("logout-btn").onclick = async () => {
@@ -228,6 +268,17 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
       body: JSON.stringify({ email, role, continue_url: window.location.href }),
     });
     log("POST /teams/:id/members", await res.json());
+  };
+
+  document.getElementById("rename-team-btn").onclick = async () => {
+    const teamId = document.getElementById("team-id-input").value;
+    const name = document.getElementById("rename-team-name-input").value;
+    const res = await fetch(`${BACKEND_URL}/teams/${teamId}`, {
+      method: "PATCH", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    log("PATCH /teams/:id", await res.json());
   };
 
   document.getElementById("upload-asset-btn").onclick = async () => {
@@ -292,6 +343,24 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
     const res = await fetch(`${BACKEND_URL}/batches/${batchId}`, { credentials: "include" });
     log("GET /batches/:batch_id", await res.json());
   };
+
+  document.getElementById("list-tools-btn").onclick = async () => {
+    const res = await fetch(`${BACKEND_URL}/tools`, { credentials: "include" });
+    log("GET /tools", await res.json());
+  };
+
+  async function clearCache(namespace) {
+    const res = await fetch(`${BACKEND_URL}/admin/cache/clear`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ namespace }),
+    });
+    if (res.status === 404) { logError("POST /admin/cache/clear", { message: "404 — API is not running with ENV=development" }); return; }
+    log("POST /admin/cache/clear", await res.json());
+  }
+  document.getElementById("clear-login-cache-btn").onclick = () => clearCache("login");
+  document.getElementById("clear-media-cache-btn").onclick = () => clearCache("media");
+  document.getElementById("clear-all-cache-btn").onclick = () => clearCache("all");
 </script>
 
 </body>

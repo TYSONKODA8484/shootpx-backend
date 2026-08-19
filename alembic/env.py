@@ -24,6 +24,7 @@ from app.models import generation_job as generation_job_models  # noqa: E402,F40
 from app.models import invite as invite_models  # noqa: E402,F401
 from app.models import product_import as product_import_models  # noqa: E402,F401
 from app.models import team as team_models  # noqa: E402,F401
+from app.models import tool as tool_models  # noqa: E402,F401
 from app.models import user as user_models  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides

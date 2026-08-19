@@ -10,7 +10,7 @@ from app.core.permissions import compute_permissions, get_membership
 from app.models.invite import TeamInvite
 from app.models.team import Team, TeamMembership, TeamRole, new_id
 from app.models.user import User
-from app.schemas.teams import MemberAdd, TeamCreate
+from app.schemas.teams import MemberAdd, TeamCreate, TeamUpdate
 
 
 def send_team_invite_email(email: str, team_name: str, continue_url: str) -> None:
@@ -51,8 +51,36 @@ def list_my_teams(db: Session, current_user: User) -> list[tuple[Team, str]]:
         db.query(Team, TeamMembership.role)
         .join(TeamMembership, TeamMembership.team_id == Team.id)
         .filter(TeamMembership.user_id == current_user.id)
+        .order_by(Team.created_at.asc())
+        # Oldest first — the personal team (create_personal_team, below) is
+        # always created before any other team a user joins, so index 0 of
+        # this list is always reliably "theirs". This is what lets a client
+        # (the test console, later a real frontend) safely default to it.
         .all()
     )
+
+
+def create_personal_team(db: Session, user: User) -> Team:
+    """Called once, right after a brand-new user's first-ever sign-in
+    (auth_routes.py, when upsert_user_from_firebase reports is_new=True).
+    Gives every user a team to work in immediately, without ever requiring
+    them to manually call POST /teams for solo use — team_id stays a
+    required field everywhere else; this just guarantees one always exists."""
+    base_name = user.name or user.email.split("@")[0]
+    team, _ = create_team(db, user, TeamCreate(name=f"{base_name}'s Workspace"))
+    return team
+
+
+def rename_team(db: Session, team_id: str, current_user: User, payload: TeamUpdate) -> Team:
+    membership = get_membership(db, team_id, current_user.id)
+    if not compute_permissions(membership.role).can_manage_team:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the team owner can rename this team")
+
+    team = db.get(Team, team_id)
+    team.name = payload.name
+    db.commit()
+    db.refresh(team)
+    return team
 
 
 def list_members(db: Session, team_id: str, current_user: User) -> list[tuple[User, str]]:

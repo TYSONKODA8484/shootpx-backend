@@ -27,7 +27,7 @@ def send_email_sign_in_link(email: str, continue_url: str) -> None:
     send_email(email, f"Sign in to {settings.APP_NAME}", html)
 
 
-def upsert_user_from_firebase(db: Session, decoded_token: dict) -> User:
+def upsert_user_from_firebase(db: Session, decoded_token: dict) -> tuple[User, bool]:
     """users.id is normally the Firebase uid — usually the same uid whether
     someone signs in through Google or an email link for the same address,
     since Firebase's default account-linking merges them.
@@ -51,6 +51,13 @@ def upsert_user_from_firebase(db: Session, decoded_token: dict) -> User:
     if not user:
         user = db.query(User).filter(User.email == email).first()
 
+    # True only when NEITHER lookup above found an existing row — i.e. this
+    # is this person's actual first-ever sign-in, not a normal re-login and
+    # not the "second sign-in method surfaces a new uid" case handled by the
+    # email fallback. auth_routes.py uses this to decide whether to create
+    # a personal team — must never fire twice for the same person.
+    is_new = user is None
+
     if user:
         user.email = email
         user.name = user.name or name
@@ -69,7 +76,7 @@ def upsert_user_from_firebase(db: Session, decoded_token: dict) -> User:
     # cached from before this upsert.
     cache.delete(CACHE_NAMESPACE, user.id)
 
-    return user
+    return user, is_new
 
 
 def set_session_cookie(response, user_id: str) -> None:

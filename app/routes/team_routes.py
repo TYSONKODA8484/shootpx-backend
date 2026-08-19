@@ -6,7 +6,7 @@ from app.core.db import get_db
 from app.middleware.auth import get_current_user
 from app.models.team import TeamRole
 from app.models.user import User
-from app.schemas.teams import AddMemberResult, InviteOut, MemberAdd, MemberOut, TeamCreate, TeamOut
+from app.schemas.teams import AddMemberResult, InviteOut, MemberAdd, MemberOut, TeamCreate, TeamOut, TeamUpdate
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
@@ -21,6 +21,18 @@ def create_team(payload: TeamCreate, db: Session = Depends(get_db), current_user
 def list_my_teams(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     rows = team_controller.list_my_teams(db, current_user)
     return [TeamOut(id=team.id, name=team.name, role=TeamRole(role)) for team, role in rows]
+
+
+@router.patch("/{team_id}", response_model=TeamOut)
+def rename_team(
+    team_id: str,
+    payload: TeamUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    team = team_controller.rename_team(db, team_id, current_user, payload)
+    membership = team_controller.get_membership(db, team_id, current_user.id)
+    return TeamOut(id=team.id, name=team.name, role=TeamRole(membership.role))
 
 
 @router.get("/{team_id}/members", response_model=list[MemberOut])

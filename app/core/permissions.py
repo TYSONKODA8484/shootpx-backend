@@ -42,15 +42,3 @@ def get_membership(db: Session, team_id: str, user_id: str) -> TeamMembership:
     if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     return membership
-
-
-def has_team_access(db: Session, team_id: str, user_id: str) -> bool:
-    """Same membership check as get_membership, but returns False instead
-    of raising — for endpoints like GET /jobs that must silently omit
-    inaccessible rows rather than error the whole request over one bad id."""
-    return (
-        db.query(TeamMembership)
-        .filter(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
-        .first()
-        is not None
-    )

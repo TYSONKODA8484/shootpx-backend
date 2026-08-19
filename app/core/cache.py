@@ -27,6 +27,12 @@ import redis
 
 from app.core.config import settings
 
+# Every namespace this app actually uses — the "clear everything" option on
+# POST /admin/cache/clear (routes/admin_routes.py) needs an explicit list
+# since namespaces are just free-form strings, nothing enumerates them
+# automatically. Add a new one here the same moment a caller starts using it.
+KNOWN_CACHE_NAMESPACES = ["login", "media"]
+
 _client: redis.Redis | None = None
 
 

@@ -828,7 +828,55 @@ constraint is documented at the call site, and you must respect it.
 
 ## Chapter 6 — Teams, Invites and Permissions
 
-**Status: 🟢 CURRENT** · **Files:** [`core/permissions.py`](../app/core/permissions.py), [`controllers/team_controller.py`](../app/controllers/team_controller.py)
+**Status: 🟡 CHANGED** · **Files:** [`core/permissions.py`](../app/core/permissions.py), [`controllers/team_controller.py`](../app/controllers/team_controller.py)
+
+### How a team comes to exist
+
+> 🔴 **Original behavior *(2026-08-17 → 2026-08-19)*:** a team only ever
+> existed if someone explicitly called `POST /teams`. A brand-new user had a
+> `userId` and zero teams — every asset/job endpoint requires `team_id`, so a
+> solo user genuinely could not upload a file or generate anything until
+> *someone* created a team and added them to it. No product reason for this
+> to be a manual step in the common case of one person working alone —
+> **why it went away:** it was pure onboarding friction, identified the
+> moment a real paying customer showed up wanting to just try the product.
+
+🟢 **Current: personal teams are automatic.** `POST /auth/session` — the
+login route — now creates a team the instant someone's `users` row is
+created for the very first time, never on an ordinary re-login:
+
+```python
+# app/controllers/auth_controller.py
+def upsert_user_from_firebase(db, decoded_token) -> tuple[User, bool]:
+    ...
+    is_new = user is None   # neither the uid lookup NOR the email-fallback
+                             # match found an existing row — genuinely new
+    ...
+    return user, is_new
+
+# app/routes/auth_routes.py
+user, is_new = auth_controller.upsert_user_from_firebase(db, decoded)
+if is_new:
+    team_controller.create_personal_team(db, user)
+```
+
+`create_personal_team` reuses the existing `create_team()` — no duplicate
+logic — naming the team `"<name or email-local-part>'s Workspace"`.
+`list_my_teams` also gained `.order_by(Team.created_at.asc())`: since the
+personal team is always created first, `GET /teams`'s first result is always
+reliably theirs — the test console (`test-console/index.html`) uses exactly
+this to auto-fill every `team_id` field the moment you sign in, so you never
+manually create a team just to try the product.
+
+**Team rename** (a genuine gap — there was no way to change a team's name at
+all) is new too: `PATCH /teams/{id}`, owner-only, reusing
+`can_manage_team` — no new permission concept needed.
+
+**No existing API contract changed.** `team_id` stays required on every
+route it always was; this only guarantees `GET /teams` is never empty.
+
+An Alembic data migration backfills the same personal team onto any account
+that signed up before this shipped.
 
 ### The permission rule
 
@@ -864,18 +912,15 @@ def get_membership(db, team_id, user_id) -> TeamMembership:
 **Note the 404, not 403.** Deliberate: a 403 would confirm the team exists.
 A 404 reveals nothing to someone probing team ids.
 
-```python
-def has_team_access(db, team_id, user_id) -> bool:
-    # same query, returns False instead of raising
-```
-
-> ⚪ **ORPHANED:** `has_team_access` was added (commit `12425e0`) for `GET /jobs`
-> to silently omit inaccessible rows rather than error the whole request. The
-> final implementation of `get_job_summaries` instead uses **one batched
-> membership query** for all the jobs at once — better, since it avoids a query
-> per job — so `has_team_access` is currently defined but **never called**.
-> Harmless. A cleanup candidate, or a useful helper for the next endpoint that
-> needs it. See the [Deprecation Ledger](#part-v--the-deprecation-ledger).
+> 🔴 **REMOVED.** `has_team_access(db, team_id, user_id) -> bool` — same
+> query as `get_membership`, returned `False` instead of raising. Added
+> (commit `12425e0`) for `GET /jobs` to silently omit inaccessible rows
+> rather than error the whole request — but the final `get_job_summaries`
+> instead uses **one batched membership query** for all the jobs at once
+> (better, avoids a query per job), so this was defined but never called
+> from the day it landed. Confirmed unused (grepped the whole `app/` tree)
+> and deleted outright, rather than left to rot as dead code. See the
+> [Deprecation Ledger](#part-v--the-deprecation-ledger), entry #7.
 
 ### The invite mechanic
 
@@ -1307,7 +1352,7 @@ open — is real, even though the "generation" is fake.
 
 ## Chapter 12 — The Tool Registry
 
-**Status: 🟡 CHANGED** — moved and restructured. All three stages documented.
+**Status: 🟡 CHANGED** — moved and restructured. All four stages documented.
 
 ### 🔴 Stage 1: no registry at all *(removed 2026-08-19, commit `d36cd5e`)*
 
@@ -1338,7 +1383,24 @@ open — is real, even though the "generation" is fake.
 > **Replaced by:** the `app/tools/` package, below. The `ToolSpec` shape itself
 > survived unchanged — only its home moved.
 
-### 🟢 Stage 3: the `app/tools/` package *(current)*
+### 🔴 Stage 3: `__init__.py` names every tool by hand *(superseded 2026-08-19)*
+
+> **How it worked:**
+> ```python
+> from app.tools import on_model_shots as _on_model_shots  # noqa: F401
+> from app.tools import ugc as _ugc  # noqa: F401
+> ```
+> One import line per tool, written by hand, alongside creating the tool's
+> own file.
+>
+> **Why it changed:** it was the one remaining manual step in an otherwise
+> fully self-contained "add a tool" story — real friction once tools started
+> arriving from an actual paying customer's requirements rather than being
+> added by the person who already knows this codebase.
+>
+> **Replaced by:** auto-discovery, Stage 4.
+
+### 🟢 Stage 4: the `app/tools/` package, auto-discovered *(current)*
 
 **Files:** [`app/tools/`](../app/tools/)
 
@@ -1346,13 +1408,29 @@ open — is real, even though the "generation" is fake.
 app/tools/
   registry.py        ToolSpec + TOOLS dict + register() + get_tool()
                      — knows about NO specific tool
-  __init__.py        imports every tool module (so they register), then
-                     re-exports the registry's public names
+  __init__.py        SCANS the folder (pkgutil.iter_modules) and imports
+                     every module that doesn't start with `_` and isn't
+                     `registry`/`sync` — no tool named by hand anymore
+  sync.py            mirrors the registry into the tools DB table on boot
+                     (see "The tools DB table" below)
   on_model_shots.py  ┐
   ugc.py             ┘ one file per tool, self-registering at import time
   _template.py       copy-paste starting point; leading _ so it is never
                      auto-imported and never registers itself
 ```
+
+```python
+# app/tools/__init__.py
+for _, module_name, _ in pkgutil.iter_modules([str(_tools_dir)]):
+    if module_name.startswith("_") or module_name in ("registry", "sync"):
+        continue
+    importlib.import_module(f"app.tools.{module_name}")
+```
+
+A tool can still be a whole subpackage, not just one flat file — `pkgutil.iter_modules`
+lists a folder with its own `__init__.py` the same way it lists a `.py`
+file, so nothing about "one importable unit per tool" changed; this just
+removed the one manual line that used to announce it.
 
 **The registration pattern** — an entire tool file:
 
@@ -1393,19 +1471,75 @@ from the registry. Marks the job failed with a clear message rather than crashin
 ```bash
 cp app/tools/_template.py app/tools/my_new_tool.py
 # fill in feature_type / display_name / output_media_type / provider
-# add ONE line to app/tools/__init__.py:
-#     from app.tools import my_new_tool as _my_new_tool  # noqa: F401
+# restart the server. That's it — no __init__.py edit anymore.
 ```
 
 Done. `POST /generate {"feature_type": "my_new_tool"}` works immediately. **No
-route, schema, controller, or worker change.** This is the payoff the whole
-chapter was building toward.
+route, schema, controller, worker, or `__init__.py` change.** This is the
+payoff the whole chapter was building toward.
 
 > 🔵 **Not done yet:** `output_media_type` is declared but not cross-checked
 > against what the provider actually returns — there has only ever been one mock
 > result shape to check against. Worth adding once a video-capable provider
 > exists, so a misconfigured tool fails loudly instead of quietly mislabelling an
 > asset.
+
+### 🟢 The `tools` DB table *(new)*
+
+**Files:** [`app/models/tool.py`](../app/models/tool.py), [`app/tools/sync.py`](../app/tools/sync.py)
+
+Every `ToolSpec` in the registry above describes *behavior* — code stays the
+source of truth for that. This table exists for the two things that
+shouldn't need a redeploy: **cost** and a **kill-switch**.
+
+| Column | Owner | Notes |
+|---|---|---|
+| `feature_type` (PK), `display_name`, `output_media_type` | **code** | refreshed from the registry on every boot |
+| `default_model_id` | **code** | nullable string, no FK yet — set once a real per-model pricing table exists |
+| `credit_cost`, `pricing_config`, `is_active` | **DB** | never touched by the sync below once a row exists |
+
+```python
+# app/tools/sync.py — called once at API startup (app/main.py)
+def sync_tools_to_db(db: Session) -> None:
+    for spec in TOOLS.values():
+        existing = db.get(Tool, spec.feature_type)
+        if existing:
+            existing.display_name = spec.display_name       # code-owned:
+            existing.output_media_type = spec.output_media_type  # overwritten
+            # credit_cost / pricing_config / is_active: DB-owned, untouched
+        else:
+            db.add(Tool(feature_type=spec.feature_type, ...))
+    db.commit()
+```
+
+Wrapped in try/except at the call site in `main.py` — a DB that isn't
+reachable yet at boot doesn't crash the whole API, same tolerance philosophy
+`init_firebase()` already uses.
+
+**The validation split, by owner:** `schemas/generation.py` still checks the
+*code* registry (`known_feature_types()`, unchanged — a genuinely unknown
+tool is a 422). `generation_controller.py` adds a *separate* check against
+the *DB* row's `is_active` — a real, registered tool that's been switched
+off gets a 400, even though its file is sitting right there in code:
+
+```python
+def _check_tool_active(db, feature_type):
+    tool_row = db.get(Tool, feature_type)
+    if tool_row is not None and not tool_row.is_active:
+        raise HTTPException(400, f"Tool {feature_type!r} is currently disabled")
+```
+
+Fails **open** if the row is somehow missing (the code registry is still the
+hard requirement), fails **closed** only on an explicit `false` — verified
+directly: flipping `is_active` to `false` in Postgres makes `/generate`
+reject that `feature_type` with 400, flipping it back makes the very next
+request succeed, no restart needed either way.
+
+`GET /tools` (public, no auth — this is catalog data, same spirit as
+`/health`) lists every active row, for a client to discover what's available
+before ever calling `/generate` — a gap this exact chapter's own spec caught
+in self-review: every route that existed let you *spend* against a
+`feature_type` you already knew, none let you *discover* one.
 
 ---
 
@@ -1677,6 +1811,30 @@ media's untouched.
 > nothing to cache. The namespace mechanism needs **zero changes** whenever one
 > is added; a caller just starts passing a new string.
 
+### 🟢 A real API for clearing a namespace *(new)*
+
+**File:** [`routes/admin_routes.py`](../app/routes/admin_routes.py)
+
+`clear_namespace()` above was only ever callable from a Python shell:
+`python -c "from app.core.cache import clear_namespace; clear_namespace('media')"`.
+`POST /admin/cache/clear` (body: `{"namespace": "login" | "media" | "all"}`)
+makes it clickable from the test console instead.
+
+```python
+@router.post("/admin/cache/clear")
+def clear_cache(namespace: str = Body(embed=True)):
+    if settings.ENV != "development":
+        raise HTTPException(status_code=404)
+    ...
+```
+
+**404, not 403, outside development** — the same "don't even confirm this
+exists" pattern `get_membership` already uses to avoid revealing a team's
+existence to someone who isn't on it (Chapter 6). `"all"` sums
+`clear_namespace()` across every namespace in the new
+`KNOWN_CACHE_NAMESPACES` list (`core/cache.py`) — the one place a namespace
+now needs registering, alongside wherever it's actually used.
+
 ---
 
 ## Chapter 16 — Testing and the Test Console
@@ -1912,6 +2070,48 @@ Neither spec is implemented yet. This entry exists so "why does this book
 suddenly know about Razorpay" has an answer.
 
 ---
+
+## Era 5 — Spec A Built and Verified Live *(2026-08-19)*
+
+Same day. Personal teams, tool auto-discovery, the `tools` DB table, and the
+dev cache API — all of Spec A — implemented against a real, running stack:
+Postgres 18, a Redis container, both Firebase credential files, `alembic
+upgrade head` applied cleanly against a genuinely fresh database.
+
+Two things worth recording because they were only findable by actually
+running the app, not by reading the code:
+
+- **`generation_jobs.external_job_id`/`provider` had never actually been
+  migrated on THIS database.** Chapter 13 already documents that these two
+  columns were hand-patched via raw `ALTER TABLE` on the *original* dev
+  machine, before Alembic existed — the baseline migration was generated as
+  a diff against that already-patched database, so it never included them.
+  A second, independent Postgres instance never got that manual patch and
+  would have had `/generate` fail the moment a job tried to write either
+  column. Autogenerate caught it the moment the `tools` table migration was
+  generated; folded into the same migration rather than a separate one.
+- **Two duplicate stale server processes were running** — a second `arq`
+  worker and a second test-console server, left over from earlier in this
+  same session, exactly the hazard `README.md`'s "only run one instance"
+  warning describes. Found via `Get-CimInstance Win32_Process`, not
+  guessed — killed, restarted clean.
+
+Verified with a script in the same spirit as `scripts/test_pipeline.py` —
+real HTTP calls against the live server, a real Postgres row inspected
+afterward, not mocks: first-ever sign-in creates exactly one correctly-named
+team and owns it; a second login never creates a second one; `GET /teams`
+returns it first; rename works for the owner and 403s for an editor; `GET
+/tools` lists both real tools; the cache-clear endpoint works in `ENV
+=development`; flipping a tool's `is_active` in Postgres directly blocks
+`/generate` with 400 and flipping it back un-blocks it, no restart needed
+either way. 16 checks, all passing.
+
+Spec B (billing) is unstarted — it needs real Razorpay credentials this
+session doesn't have, which the schema/pricing-engine/enforcement code can
+be written and unit-verified without, but the actual subscribe/webhook flow
+genuinely cannot be proven live without them.
+
+---
 ---
 
 # Part V — The Deprecation Ledger
@@ -1982,15 +2182,15 @@ decision or wonders why a comment mentions something that doesn't exist.
 | **Replaced by** | The `app/tools/` package, one file per tool — [Chapter 12](#chapter-12--the-tool-registry) |
 | **What survived** | The `ToolSpec` dataclass shape, unchanged. Only its home moved. `register()` was added, gaining a duplicate-key guard a dict literal couldn't have had |
 
-### ⚪ 7. `has_team_access()` — orphaned, not removed
+### 🔴 7. `has_team_access()` — orphaned, then actually removed
 
 | | |
 |---|---|
-| **What it is** | A non-raising membership check in `core/permissions.py:47` |
+| **What it was** | A non-raising membership check in `core/permissions.py` |
 | **Added by** | `12425e0`, for `GET /jobs` to silently omit inaccessible rows |
-| **Status** | **Still in the code. Called by nothing.** |
-| **Why** | `get_job_summaries` was ultimately implemented with **one batched membership query** for all jobs at once — strictly better, since it avoids a query per job — so the helper was never wired up |
-| **What to do** | Harmless. Either delete it, or use it in the next endpoint that needs a non-raising check. Not a bug either way |
+| **Lived** | 2026-08-17 → 2026-08-19, defined but called by nothing the entire time |
+| **Why it went away** | `get_job_summaries` was ultimately implemented with **one batched membership query** for all jobs at once — strictly better, since it avoids a query per job — so the helper was never wired up. Confirmed unused (grepped the whole `app/` tree) and deleted rather than left to rot |
+| **Replaced by** | Nothing — the batched-query approach it would have duplicated already existed |
 
 ### 🔴 8. `localhost` in the test script
 
@@ -2009,10 +2209,17 @@ decision or wonders why a comment mentions something that doesn't exist.
 Everything below is 🔵 **deliberately not built**, with the reasoning recorded so
 it isn't re-derived.
 
-### 🔵 Planned Chapter A — Personal Teams & Tool Registry
+### 🟢 Planned Chapter A — Personal Teams & Tool Registry — BUILT
 
-**Status: 🔵 PLANNED** · **Full spec:** [`2026-08-19-personal-teams-and-tools-registry-design.md`](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md)
-· **Depends on:** nothing — can start immediately
+**Status: 🟢 BUILT**, same day it was designed (2026-08-19) · **Full spec:**
+[`2026-08-19-personal-teams-and-tools-registry-design.md`](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md)
+· **The real, live documentation now lives in
+[Chapter 6](#chapter-6--teams-invites-and-permissions),
+[Chapter 12](#chapter-12--the-tool-registry), and
+[Chapter 15](#chapter-15--caching)** — kept here, unedited, as the historical
+plan those chapters were built from. Verified end to end against a live
+server + Postgres (16/16 checks) before being marked built, not just "the
+code compiles" — see the Timeline for what was actually checked.
 
 **The problem.** A brand-new user has a `userId` but zero teams the moment
 they sign up, and `team_id` is a required field on every asset/job endpoint
@@ -2329,13 +2536,19 @@ copy `_template.py`, fill in four fields, add one import line.
 shootpx-backend/
 ├── alembic.ini                     Alembic config (its sqlalchemy.url is NOT used — see env.py)
 ├── alembic/
-│   ├── env.py                      🟢 Imports the APP's engine + all 6 models
+│   ├── env.py                      🟢 Imports the APP's engine + all 7 models
 │   └── versions/
 │       ├── e6166cbe300b_...py      Baseline — adopts the pre-existing live DB
-│       └── b55cfad6e50d_...py      Adds product_imports + assets.product_import_id
+│       ├── b55cfad6e50d_...py      Adds product_imports + assets.product_import_id
+│       ├── e3d3552b463c_...py      🟢 Backfills personal teams for pre-existing users
+│       └── d3e31e5bef95_...py      🟢 Adds tools table + generation_jobs.external_job_id/provider
+│                                   (the latter two columns had only ever been hand-patched
+│                                    on the ORIGINAL dev machine, pre-Alembic — a fresh DB
+│                                    never had them until this migration; see Chapter 13)
 │
 ├── app/
-│   ├── main.py                     Creates the app, mounts /files, registers 6 routers
+│   ├── main.py                     Creates the app, mounts /files, registers 7 routers,
+│                                   syncs the tools table at boot
 │   ├── worker.py                   🟢 THE WORKER PROCESS — lock, submit/poll, Retry
 │   │
 │   ├── core/                       ── infrastructure & swappable seams ──
@@ -2348,13 +2561,16 @@ shootpx-backend/
 │   │   ├── ai_provider.py          🔌 AIProvider (submit/poll) + MockAIProvider
 │   │   ├── product_scraper_client.py  submit/poll client for the scraper service
 │   │   ├── queue.py                arq pool + the two enqueue functions
-│   │   ├── cache.py                Namespaced Redis cache
+│   │   ├── cache.py                🟢 Namespaced Redis cache + KNOWN_CACHE_NAMESPACES
 │   │   ├── asset_lookup.py         Cached, batch-aware Asset lookups ("media")
-│   │   └── permissions.py          compute_permissions, get_membership, has_team_access ⚪
+│   │   └── permissions.py          compute_permissions, get_membership
+│   │                               (has_team_access deleted — Ledger #7)
 │   │
 │   ├── tools/                      ── the 23-tools registry ──
 │   │   ├── registry.py             ToolSpec, TOOLS, register(), get_tool()
-│   │   ├── __init__.py             Imports every tool so it registers
+│   │   ├── __init__.py             🟢 Auto-discovers every tool module (pkgutil), no
+│   │                               hand-written import list anymore
+│   │   ├── sync.py                 🟢 Mirrors the registry into the tools DB table
 │   │   ├── on_model_shots.py       Tool 1
 │   │   ├── ugc.py                  Tool 2
 │   │   └── _template.py            Copy-paste starter (leading _ = never auto-imported)
@@ -2369,28 +2585,33 @@ shootpx-backend/
 │   │   ├── invite.py               team_invites (keyed by email)
 │   │   ├── asset.py                assets (upload | generated | imported)
 │   │   ├── generation_job.py       generation_jobs
-│   │   └── product_import.py       product_imports
+│   │   ├── product_import.py       product_imports
+│   │   └── tool.py                 🟢 tools (credit_cost/pricing_config/is_active, DB-owned)
 │   │
 │   ├── schemas/                    ── Pydantic request/response shapes ──
 │   │   ├── auth.py  teams.py  assets.py  generation.py  product_import.py
+│   │   └── tools.py                 🟢 ToolOut
 │   │
 │   ├── controllers/                ── THE ACTUAL LOGIC ──
-│   │   ├── auth_controller.py      upsert user, session cookie, magic-link email
-│   │   ├── team_controller.py      create/list teams, add member, accept invites
+│   │   ├── auth_controller.py      upsert user (now returns is_new too), session cookie
+│   │   ├── team_controller.py      create/list/rename teams, create_personal_team,
+│   │                               add member, accept invites
 │   │   ├── asset_controller.py     upload
-│   │   ├── generation_controller.py  single + bulk generate, job/batch status
+│   │   ├── generation_controller.py  single + bulk generate (+ Tool.is_active check),
+│   │                               job/batch status
 │   │   └── product_import_controller.py
 │   │
 │   └── routes/                     ── thin URL → controller wiring ──
 │       ├── health_routes.py  auth_routes.py  team_routes.py
 │       ├── asset_routes.py   generation_routes.py  product_import_routes.py
+│       └── admin_routes.py          🟢 POST /admin/cache/clear (dev-only), GET /tools
 │
 ├── scripts/test_pipeline.py        End-to-end proof against a LIVE server
-├── test-console/index.html         Hand-driven UI (5 sections)
+├── test-console/index.html         Hand-driven UI — 6 sections now (tools + cache added)
 ├── docs/
 │   ├── BOOK.md                     ← you are here
 │   ├── superpowers/plans/2026-08-17-generation-pipeline.md
-│   └── superpowers/specs/          Written, reviewed, not-yet-built designs
+│   └── superpowers/specs/          Design docs — Spec A built (2026-08-19), Spec B not yet
 │       ├── 2026-08-19-personal-teams-and-tools-registry-design.md
 │       └── 2026-08-19-billing-credits-and-payments-design.md
 ├── README.md                       Setup + day-to-day usage
@@ -2399,7 +2620,7 @@ shootpx-backend/
 └── requirements.txt
 ```
 
-**Legend:** 🔌 = a swappable seam · ⚪ = orphaned
+**Legend:** 🔌 = a swappable seam
 
 ---
 
@@ -2419,6 +2640,7 @@ shootpx-backend/
 | `GET` | `/teams/{id}/members` | ✅ member | The roster |
 | `GET` | `/teams/{id}/invites` | ✅ member | Still-pending invites |
 | `POST` | `/teams/{id}/members` | ✅ **owner** | Direct-add if they have an account, else pending invite + email |
+| `PATCH` | `/teams/{id}` | ✅ **owner** | 🟢 Rename |
 | `POST` | `/teams/{id}/assets` | ✅ + `can_upload_assets` | Multipart upload |
 | `POST` | `/generate` | ✅ + `can_generate` | Enqueue one job. **Returns immediately** |
 | `POST` | `/generate/bulk` | ✅ + `can_generate` | Up to 100 assets, one `feature_type`, shared `batch_id` |
@@ -2426,6 +2648,8 @@ shootpx-backend/
 | `GET` | `/batches/{batch_id}` | ✅ member | Aggregate counts + every job |
 | `POST` | `/product-imports` | ✅ + `can_upload_assets` | Enqueue a scrape. Returns immediately |
 | `GET` | `/product-imports/{id}` | ✅ member | Poll; once done includes metadata + every image as a real asset |
+| `GET` | `/tools` | — | 🟢 Every active tool — `feature_type`, `display_name`, `credit_cost` |
+| `POST` | `/admin/cache/clear` | — | 🟢 Dev-only (`ENV=development`), 404 otherwise |
 
 ### 🔵 Planned routes — not built yet
 
@@ -2435,9 +2659,6 @@ no spec written ([Part VI](#part-vi--what-comes-next) has the full reasoning).
 
 | Method | Path | Spec |
 |---|---|---|
-| `PATCH` | `/teams/{id}` | [Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md) |
-| `GET` | `/tools` | [Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md) |
-| `POST` | `/admin/cache/clear` | [Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md) |
 | `GET` | `/plans` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
 | `GET` | `/billing/credit-packs` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
 | `POST` | `/billing/subscribe` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
@@ -2573,8 +2794,10 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 **End of the ShootPX Backend Book.**
 
 *Last chapter: [Chapter 16](#chapter-16--testing-and-the-test-console) ·
-Last commit covered: 2026-08-19, `0b7389b` ·
-Last timeline entry: Era 4, 2026-08-19 — two specs written, neither implemented yet.*
+Last commit covered: 2026-08-19, `0b7389b` (working-tree changes since then are
+Spec A's implementation, described in Era 5 — not yet committed) ·
+Last timeline entry: Era 5, 2026-08-19 — Spec A built and verified live (16/16
+checks); Spec B still needs real Razorpay credentials to go further.*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 
