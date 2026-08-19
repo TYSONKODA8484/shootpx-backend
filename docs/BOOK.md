@@ -106,6 +106,8 @@ Every section, table row, and ledger entry in this book carries one of these:
 **[Part V — The Deprecation Ledger](#part-v--the-deprecation-ledger)**
 
 **[Part VI — What Comes Next](#part-vi--what-comes-next)**
+- [🔵 Planned Chapter A — Personal Teams & Tool Registry](#-planned-chapter-a--personal-teams--tool-registry)
+- [🔵 Planned Chapter B — Billing: Payments, Credits, Dynamic Pricing](#-planned-chapter-b--billing-payments-credits-dynamic-pricing)
 
 **[Part VII — Appendices](#part-vii--appendices)**
 - [Appendix A: Complete File Map](#appendix-a-complete-file-map)
@@ -2007,69 +2009,249 @@ decision or wonders why a comment mentions something that doesn't exist.
 Everything below is 🔵 **deliberately not built**, with the reasoning recorded so
 it isn't re-derived.
 
-### 🔵 Two specs already written, ready to implement
+### 🔵 Planned Chapter A — Personal Teams & Tool Registry
 
-As of 2026-08-19, two full designs exist under
-[`docs/superpowers/specs/`](superpowers/specs/) — reviewed, self-reviewed, not
-yet implemented. This section is their pointer; the specs themselves are the
-source of truth, not duplicated here.
+**Status: 🔵 PLANNED** · **Full spec:** [`2026-08-19-personal-teams-and-tools-registry-design.md`](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md)
+· **Depends on:** nothing — can start immediately
 
-**[Spec A — Personal Teams & Tool Registry](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md)**
-(no dependencies, can start immediately):
-- Auto-create a personal team the moment someone signs up, so `team_id` is
-  never a blocker for a solo user — replaces the current "you must manually
-  call `POST /teams` first" behavior described in
-  [Chapter 6](#chapter-6--teams-invites-and-permissions).
-- `PATCH /teams/{id}` (rename, owner-only) and `GET /tools` (list every
-  active tool) — two routes this codebase has never had.
-- `app/tools/` auto-discovery — adding a tool stops needing an
-  `__init__.py` edit at all, extending
-  [Chapter 12](#chapter-12--the-tool-registry)'s "one file per tool" further
-  than it goes today.
-- A DB-backed `tools` table (`credit_cost`, `is_active`, `pricing_config`) —
-  code stays the source of truth for *behavior*, the DB becomes editable
-  without a redeploy for *cost and kill-switches*.
-- A dev-only cache-clear API (`POST /admin/cache/clear`, `ENV=development`
-  only) — extends [Chapter 15](#chapter-15--caching)'s manual one-liner into
-  something the test console can actually click.
-- Removes `has_team_access()` ([Deprecation Ledger #7](#part-v--the-deprecation-ledger)) —
-  the first entry in that ledger to go from ⚪ orphaned to actually deleted.
+**The problem.** A brand-new user has a `userId` but zero teams the moment
+they sign up, and `team_id` is a required field on every asset/job endpoint
+that exists ([Chapter 6](#chapter-6--teams-invites-and-permissions)). A solo
+user cannot upload a file or generate anything until *someone* calls
+`POST /teams` — a manual step with no product reason to exist for the common
+case of one person working alone. Separately, adding a tool still requires
+one manual edit (`app/tools/__init__.py`) on top of writing the tool's own
+file, and there is no way to disable a broken tool or attach a cost to it
+without a code deploy.
 
-**[Spec B — Billing: Payments, Credits, Dynamic Pricing](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)**
-(depends on Spec A):
-- A `PaymentProvider` seam — Razorpay first, built the same way `Storage` and
-  `AIProvider` were ([§8](#8-the-swappable-seam-pattern)) so Stripe/PayPal
-  are a new file later, not a rewrite.
-- Per-team credit balances (confirmed decision: **per-team, not per-user** —
-  matches every other resource in this app being team-scoped) with a
-  full audit ledger (`credit_transactions`), monthly/yearly subscriptions,
-  and one-off top-ups.
-- A layered pricing engine: flat tool cost today → per-model base cost +
-  tool-specific modifiers (resolution, etc.) → optional per-template
-  override — so a future multi-model tool or template feature prices itself
-  without touching this engine again.
-- Credit cost is **resolved once, at submission, and stored on the job** —
-  never recomputed at completion — so a mid-flight pricing change can never
-  retroactively affect a job already running.
-- Monthly credit refills run off an **independent arq cron job**, not
-  provider webhooks — a yearly Razorpay subscription only fires one charge
-  event a year, which can't drive a monthly refill on its own. **The very
-  first grant is synchronous, not cron-driven** — a second review pass
-  caught that the original draft would have left a brand-new signup at zero
-  credits for up to a day, waiting on the next daily tick.
-- Webhook processing is **idempotent** (checked against `payments` before any
-  credit grant — providers redeliver events at-least-once) and credit
-  balance updates are **atomic SQL**, not read-then-write — a webhook-driven
-  grant and a worker-driven deduction can land at the same moment, and only
-  deductions are protected by the existing per-team generation lock.
-- New routes: `GET /plans`, `GET /billing/credit-packs`, `POST /billing/subscribe`
-  (doubles as a plan-change when one's already active), `POST /billing/cancel`
-  (effective at period end, never instant), `POST /billing/topup`,
-  `POST /billing/webhook/{provider}` (also handles refunds, reactively —
-  refunds are issued from Razorpay's own dashboard, not our API), `GET /billing/teams/{id}`.
-- A second Alembic migration backfills the Free plan onto every team that
-  already exists by the time this spec ships — Spec A creates real teams
-  before Spec B exists, and nothing else would catch them.
+**How it will work.**
+
+*Team auto-creation.* `auth_controller.upsert_user_from_firebase` returns
+`(User, is_new)` — `is_new` is `True` only when neither the Firebase uid nor
+an email-fallback match found an existing row, so it can never fire twice for
+the same person and never fires on an ordinary re-login. `POST /auth/session`
+calls a new `team_controller.create_personal_team(db, user)` exactly when
+`is_new` is `True` — it reuses the existing `create_team()` function, naming
+the team `"<name or email-local-part>'s Workspace"`. `list_my_teams` gains
+`.order_by(Team.created_at.asc())`, so `GET /teams`'s first result is always,
+reliably, that personal team — which is what lets a client (the test
+console today, a real frontend later) safely default to it without guessing.
+**No existing API contract changes** — `team_id` stays required everywhere it
+is today; this only guarantees it's never empty.
+
+A companion Alembic **backfill migration** finds every existing `users` row
+with zero `team_members` rows and creates the same personal-team-plus-owner-
+membership for each, via raw SQL independent of the model code (so it stays
+correct even as models drift later).
+
+*Team rename.* A genuinely missing capability — `PATCH /teams/{id}`,
+owner-only, reusing the `can_manage_team` permission that already exists.
+
+*Tool registry auto-discovery.* `app/tools/__init__.py` stops naming each
+tool module by hand and instead scans the folder with `pkgutil.iter_modules`,
+importing everything that isn't prefixed `_` (so `_template.py` stays
+excluded via the same convention it already uses) and isn't `registry.py`
+itself. **The entire process of adding a tool becomes "write the file or
+folder, restart the server"** — no import line, no route, no schema change.
+A tool can still be a whole subpackage, not just one flat file, exactly as
+[Chapter 12](#chapter-12--the-tool-registry) already allows — this just
+removes the one remaining manual step.
+
+*The `tools` DB table.* A new model mirrors the in-memory registry into
+Postgres: `feature_type` (PK), `display_name`, `output_media_type` — all
+**code-owned**, refreshed from the registry every boot via a new
+`sync_tools_to_db()` (wrapped in try/except, same crash-tolerance philosophy
+as `init_firebase()`) — plus `credit_cost`, `pricing_config` (JSON), and
+`is_active`, all **DB-owned** and never touched by that sync once a row
+exists. A nullable `default_model_id` column (no FK yet — the table it would
+point at, `ai_models`, doesn't exist until Planned Chapter B) is the one
+thread connecting this table to the pricing engine below. **Validation
+splits cleanly by owner**: the Pydantic schema still checks the *code*
+registry (`known_feature_types()`, unchanged, still a 422 for a genuinely
+unknown tool) — `generation_controller` adds a *new*, separate check against
+the *DB* row's `is_active`, rejecting a disabled tool with 400 even though
+its file is still sitting right there in code, fail-open if the row is
+somehow missing, fail-closed only on an explicit `false`.
+
+*A dev-only cache-clear API.* [Chapter 15](#chapter-15--caching)'s
+`clear_namespace()` has only ever been callable from a Python shell.
+`POST /admin/cache/clear` (body: `{"namespace": "login" | "media" | "all"}`)
+exposes it — guarded by `if settings.ENV != "development": raise 404`,
+**404 not 403**, the same "don't even confirm this exists" pattern
+`get_membership` already uses for team access. A new `GET /tools` route
+(caught in this spec's own self-review — every route it originally proposed
+let a client *spend* against a `feature_type` it already knew, none let it
+*discover* one) lists every active tool for a future picker UI.
+
+*Cleanup.* `has_team_access()` ([Deprecation Ledger #7](#part-v--the-deprecation-ledger))
+— confirmed unused since `get_job_summaries` was built against a batched
+membership query instead — gets deleted, the first ledger entry to move from
+⚪ orphaned to actually 🔴 removed.
+
+**Verification plan** (no automated suite exists in this repo, same manual
+rigor as everything else): sign up fresh → one team appears automatically,
+named correctly, no `POST /teams` call needed anywhere first; `PATCH` rename
+works for the owner, 403 for anyone else; the backfill migration, run
+against a seeded teamless row, produces a team; a new tool file dropped in
+with zero `__init__.py` edit is generating within one restart; flipping a
+tool's `is_active` to `false` directly in Postgres makes `/generate` 400 for
+that `feature_type` while the schema's own 422 for a truly unknown one still
+fires separately.
+
+### 🔵 Planned Chapter B — Billing: Payments, Credits, Dynamic Pricing
+
+**Status: 🔵 PLANNED** · **Full spec:** [`2026-08-19-billing-credits-and-payments-design.md`](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)
+· **Depends on:** Planned Chapter A (`create_personal_team`, the `tools`
+table, `Tool.default_model_id`)
+
+**The problem.** There is no billing anywhere in this codebase — `DESIGN.md`
+lists it as explicitly out of scope from day one, and it stayed that way
+until a real paying customer showed up wanting a concrete tool (a
+lingerie/apparel virtual-try-on tool, which turned out to map directly onto
+the `on_model_shots` tool already registered since Era 1 — see the Timeline).
+Money touching the system for the first time forced real decisions: credits
+are **per-team**, not per-user (matching every other resource in this app
+being team-scoped, decided explicitly rather than defaulted into), Razorpay
+is the payment aggregator but not a permanent architectural commitment, and
+pricing has to be able to vary by model and by template — not just by tool —
+without a redesign once those features actually exist.
+
+**The payment provider seam.** The same swappable-seam pattern used twice
+already ([§8](#8-the-swappable-seam-pattern), for `Storage` and
+`AIProvider`) gets a third application:
+
+```python
+class PaymentProvider(ABC):
+    def create_subscription(self, team_id, plan) -> SubscriptionHandle: ...
+    def create_one_time_order(self, team_id, amount, currency) -> OrderHandle: ...
+    def cancel_subscription(self, provider_subscription_id) -> None: ...
+    def verify_webhook_signature(self, payload, signature) -> bool: ...
+
+payment_provider: PaymentProvider = RazorpayProvider()
+```
+
+Every table that touches a payment record stores **both** `provider` and a
+`provider_*_id` — the exact naming convention `GenerationJob.provider`/
+`external_job_id` already established, not a new one invented for this.
+Adding Stripe later is a new class and new rows with `provider="stripe"`;
+**zero shared billing logic changes**.
+
+**The data model** — eight new tables (naming the AI-model catalog `ai_models`,
+not `models`, to avoid colliding with the `app/models/` Python package):
+
+| Table | Holds |
+|---|---|
+| `plans` | Name, billing cycle, price, `credit_allowance` (granted **per monthly refill**, regardless of cycle), `max_team_members`, provider/plan-id. Ships with one placeholder Free plan — real pricing tiers are business data, not invented here |
+| `team_subscriptions` | One per team: plan, provider subscription id, status, `current_period_end`, `next_credit_refill_at` |
+| `team_credit_balances` | The fast-read number `/generate` checks — always reconcilable against, never a substitute for, the ledger below |
+| `credit_transactions` | Append-only audit ledger — every grant/spend/refund/top-up, with a `balance_after` snapshot so no one ever needs to replay history to answer a support question |
+| `credit_packs` | Purchasable one-off top-up amounts |
+| `payments` | Our own reconciliation record of every provider charge, independent of re-querying the provider |
+| `ai_models` | The model-playground catalog — `base_credit_cost` per model, DB-editable |
+| `templates` | Presets that can override computed pricing entirely via `credit_cost_override` |
+
+`generation_jobs` gains one column, `credit_cost` — see the pricing engine
+below for why.
+
+**The pricing engine** answers "how many credits does *this specific*
+generation cost," in three tiers of precedence:
+
+```
+1. Request names a template with credit_cost_override set → use it. Done.
+2. Otherwise: base = ai_models[model_id].base_credit_cost, where model_id
+   comes from the request or the tool's own default_model_id
+   → apply THIS TOOL's own modifier logic (reads tools.pricing_config,
+     e.g. {"resolution_multipliers": {"2k": 1, "4k": 2}})
+   → final cost
+3. A tool with no model concept at all → tools.credit_cost directly. This
+   is every tool that exists today — nothing breaks for a simple tool.
+```
+
+This is why the market's big players (Leonardo, RunwayML, Civitai and
+similar) don't use one flat number per feature: cost is really driven by
+*which model* runs (the real cost driver, since that maps to actual provider
+spend), *modified* by settings like resolution, and occasionally *overridden
+entirely* by a template that wraps different backend logic altogether. Each
+tool's own modifier logic stays in that tool's own file in `app/tools/` —
+this doesn't change "one file per tool, self-contained"
+([Chapter 12](#chapter-12--the-tool-registry)); a tool that needs custom
+pricing writes it once, alongside its own request-shaping logic, same as it
+always would.
+
+🐛 **Why the cost is locked in at submission, never recomputed at
+completion.** `generation_controller.run_generation` resolves the cost once
+and writes it to the new `GenerationJob.credit_cost` column *before*
+enqueueing. `app/worker.py` deducts exactly that stored number on success —
+never recomputes. Without this, an admin editing `pricing_config` while a
+job is mid-flight could silently change what an already-running job costs;
+with it, every ledger row has a permanent, precise record of what that
+specific job actually cost, immune to later pricing changes.
+
+**Credit refills, and a bug caught before it shipped.** Razorpay only
+charges a yearly subscription once a year, so its `subscription.charged`
+webhook cannot drive a *monthly* refill for an annual plan — refills run
+instead off an independent **arq cron job** (arq already supports scheduled
+work, same process as `app/worker.py`), checking daily for any team whose
+`next_credit_refill_at` has passed. The first draft of this spec relied on
+that same daily cron for a team's *very first* grant too — both a brand-new
+free signup and someone who'd just paid would have sat at **zero credits for
+up to a day**, waiting on the next tick. A second, whole-flow review pass
+caught this before any code existed: the fix routes both the personal-team
+assignment and the `subscription.activated` webhook through the same shared,
+atomic `_grant_credits()` helper the cron itself uses, called *synchronously*
+at the moment a subscription is created — the cron now only ever handles the
+*second* month onward, for every plan type uniformly.
+
+That same review pass caught two more things a payment system cannot skip:
+**webhook idempotency** (Razorpay, like every provider, delivers events
+at-least-once, never exactly-once — every handler now checks `payments` for
+the event id *before* granting anything, so a redelivered webhook can't
+double-credit a team) and **atomic balance updates** (a webhook-driven grant
+and a worker-driven deduction can land at the same moment — only deductions
+are protected by the existing per-team generation lock, so the balance update
+itself has to be atomic SQL, `balance = balance + :amount`, not read-then-write
+Python).
+
+**Enforcement, end to end:**
+- `generation_controller`: resolve cost, check `balance >= cost` → 402 if
+  short, *before* the job is even created.
+- `app/worker.py`, on success only (a **failed** job never costs anything,
+  a deliberate earlier decision): deduct the stored `credit_cost`, in the
+  **same `db.commit()`** that flips the job to `done` — so a mid-crash retry
+  can never charge without completing, or complete without charging.
+- `team_controller.add_member`: reject an invite past the plan's
+  `max_team_members` with a clear "upgrade your plan" message — same
+  hard-block philosophy as credits, not a silent soft limit.
+
+**What happens when things go wrong or change.** A failed recurring charge
+uses Razorpay's own automatic retry (dunning) as the grace period — no
+separate timer on our side; only when Razorpay reports the subscription
+`halted` does the team move to Free. `POST /billing/cancel` doesn't downgrade
+instantly — a team keeps what they already paid for until
+`current_period_end`. `POST /billing/subscribe` on an already-active team is
+treated as a plan change, effective at next renewal, no proration (a real
+feature, deliberately deferred rather than guessed at). Refunds are **issued
+from Razorpay's own dashboard**, never our API — this spec only reacts,
+recording a `refund.processed` webhook into `payments` and the ledger
+without clawing back credits already spent.
+
+**Discovery routes** (`GET /plans`, `GET /billing/credit-packs`) exist for
+the same reason `GET /tools` does in Planned Chapter A — every other route
+here lets a team *spend* against an id it already knows; nothing let a
+client see what's available to choose from until this spec's own review
+caught the gap and added them.
+
+**A second backfill migration**, alongside Planned Chapter A's, assigns the
+Free plan to every team that already exists by the time this spec ships —
+Chapter A creates real teams before this one exists, and without this,
+those teams would have no subscription row at all.
+
+**Non-goals, stated rather than silently skipped:** real pricing values (one
+placeholder Free plan ships; actual tiers are business data), an admin UI for
+editing plans/models/templates (DB rows for now), proration, a compliant
+invoicing/tax system (`payments` is a reconciliation record, not an invoice),
+and a second `PaymentProvider` — the seam exists, nothing implements Stripe
+yet.
 
 ### 🔵 Every missing API, catalogued
 
