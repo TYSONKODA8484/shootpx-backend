@@ -160,10 +160,35 @@ def cancel_subscription(db: Session, current_user: User, team_id: str) -> dict:
         payment_provider.cancel_subscription(sub.provider_subscription_id)
     except PaymentProviderError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Could not cancel: {exc}") from exc
-    # Does NOT downgrade immediately — the team keeps what they already
-    # paid for until current_period_end. The webhook (subscription.cancelled)
-    # confirms the provider-side cancellation; actually moving to Free
-    # happens the same way a halted subscription does (see process_webhook_event).
+
+    # Razorpay itself stops future billing (no auto-renewal, no further
+    # charges — cancel_at_cycle_end on the provider side already guarantees
+    # this) and we never refund money. What THIS system controls is the
+    # CREDIT balance: cancelling claws back this cycle's still-unused
+    # subscription allowance immediately, capped at whatever's actually
+    # left — min(balance, plan.credit_allowance), never more. Top-up
+    # ("lifetime") credits bought separately are never touched, because
+    # this is a flat cap on the clawback amount, not a search through which
+    # credits came from where — the two examples that define this rule:
+    # 101 left (100 from the plan + 1 leftover top-up) -> claw back 100,
+    # 1 remains; 94 left (all plan-granted, nothing bought separately) ->
+    # claw back 94 (capped, not the full 100), 0 remains. See BOOK.md
+    # Chapter 17.
+    plan = db.get(Plan, sub.plan_id)
+    if plan is not None:
+        balance = get_balance(db, team_id)
+        clawback = min(balance, plan.credit_allowance)
+        if clawback > 0:
+            apply_credit_delta(
+                db, team_id, -clawback, reason=CreditReason.subscription_cancelled.value,
+                reference_id=sub.provider_subscription_id,
+            )
+
+    # Does NOT downgrade the PLAN immediately — the team keeps paid-tier
+    # access (e.g. max_team_members) until current_period_end; only the
+    # credit balance is adjusted right now. The webhook (subscription.cancelled)
+    # confirms the provider-side cancellation; actually moving the plan to
+    # Free happens the same way a halted subscription does (see process_webhook_event).
     sub.status = SubscriptionStatus.cancelled.value
     db.commit()
     return {"status": "cancelled", "effective": sub.current_period_end.isoformat() if sub.current_period_end else "end of current period"}

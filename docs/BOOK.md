@@ -2105,14 +2105,43 @@ the per-team generation lock ([Chapter 9](#chapter-9--the-queue-and-the-worker))
 
 ### Cancellation, plan changes, refunds
 
-`POST /billing/cancel` doesn't downgrade instantly — the team keeps what
-they paid for until `current_period_end`; the eventual downgrade to Free
-happens the same way a `halted` subscription's does.
+`POST /billing/cancel` doesn't downgrade the **plan** instantly — the team
+keeps paid-tier access (e.g. `max_team_members`) until `current_period_end`;
+the eventual plan downgrade to Free happens the same way a `halted`
+subscription's does. Razorpay itself guarantees no further auto-billing and
+no refund happens anywhere in this codebase — cancellation only ever stops
+*future* charges, per Razorpay's own `cancel_at_cycle_end` semantics.
+
+> 🔴 **Original credit behavior:** cancelling touched nothing about the
+> credit balance at all — whatever was left stayed left, no matter its
+> source. **Why it changed:** a real product decision, made explicit with
+> two worked examples rather than left implicit — a subscription's credits
+> aren't something a cancelled customer should keep accumulating value
+> from indefinitely, but money already spent on a separate top-up purchase
+> is genuinely owned and must never be touched by a subscription decision.
+
+🟢 **Current: the credit balance (not the plan) is clawed back
+immediately, capped at what the plan actually granted.**
+`min(current_balance, plan.credit_allowance)` is deducted the moment
+`POST /billing/cancel` succeeds — `reason='subscription_cancelled'` in the
+ledger. This is a flat cap, not a search through *which* credits are
+"subscription" vs. "top-up" — no provenance tracking needed, and it still
+produces the exactly-correct answer for both defining cases:
+- 101 remaining (100 from the plan + 1 leftover of a separately-bought
+  top-up) → claw back 100 (the cap) → **1 remains**, genuinely the
+  top-up's, untouched.
+- 94 remaining, entirely plan-granted, nothing bought separately → claw
+  back 94 (capped at what's actually there, not the full 100) → **0
+  remains** — the cap prevents ever going negative.
+
 `POST /billing/subscribe` on an already-active team is a **plan change**,
 effective at next renewal, no proration (deliberately deferred). Refunds are
 **issued from Razorpay's own dashboard**, never our API — this codebase
 only reacts to the resulting webhook, recording it without clawing back
-credits already spent.
+credits already spent (a refund and a cancellation are deliberately
+independent — the money-record correction and the credit-balance
+correction never share logic, since a refund can happen with no
+cancellation involved at all, and vice versa).
 
 ### Discovery routes
 
@@ -2581,6 +2610,26 @@ re-login, first charge vs. renewal, active vs. cancelled-then-renewed —
 that a single straight-through test path never exercises twice. Verifying
 "it works once" is necessary and was done for all five; it was never
 sufficient on its own.
+
+---
+
+## Era 10 — Cancellation Claws Back Credits, Precisely *(2026-08-19)*
+
+Same day. Not a bug this time — a real product decision, made explicit by
+the user with two fully worked numeric examples rather than left to
+inference. Previously, cancelling a subscription touched the credit
+balance not at all. Now it does, exactly as specified: full mechanism and
+the two examples that define it are in
+[Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing).
+
+The examples turned out to imply a single clean formula —
+`min(current_balance, plan.credit_allowance)` — verified against both
+before writing a line of the fix: `101 → 1` and `94 → 0`, computed by
+hand first, then reproduced live against the real system (10 checks,
+matching both exactly, including confirming top-up credits are never
+touched when nothing more than the plan's allowance exists to claw back).
+No credit-provenance tracking was needed — the flat cap alone produces the
+correct answer for every case the user described.
 
 ---
 ---
@@ -3291,17 +3340,19 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 **End of the ShootPX Backend Book.**
 
 *Last chapter: [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) ·
-Last timeline entry: Era 9, 2026-08-19 — both specs built, product imports
+Last timeline entry: Era 10, 2026-08-19 — both specs built, product imports
 wired into the credit system with real discoverability, real payments made
 by an actual user through the actual UI (not a script) surfacing this
 session's two most important bugs — webhooks alone don't work without a
 publicly reachable URL, and re-subscribing after a cancellation silently
 never credited anyone — both fixed and verified against the user's own
-real account and real re-created scenarios. Five real bugs found this
-session, every one of them by actually running the product at a state
-transition a straight-through test never exercises twice; none found by
-re-reading code alone. Every gap identified either has a spec, is built, or
-is explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
+real account and real re-created scenarios, and cancellation now claws
+back credits by a precise, user-specified formula (verified against two
+hand-computed worked examples before the fix was even written). Five real
+bugs found this session, every one by actually running the product at a
+state transition a straight-through test never exercises twice; none found
+by re-reading code alone. Every gap identified either has a spec, is
+built, or is explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 

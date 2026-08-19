@@ -13,6 +13,11 @@ class CreditReason(str, enum.Enum):
     generation_spend = "generation_spend"
     refund = "refund"
     manual_adjustment = "manual_adjustment"
+    subscription_cancelled = "subscription_cancelled"  # the clawback applied
+    # when a paid subscription is cancelled — removes min(balance, plan's
+    # credit_allowance), never more than what's actually left, so top-up
+    # ("lifetime") credits bought separately are never touched by this.
+    # See billing_controller.cancel_subscription / BOOK.md Chapter 17.
 
 
 class TeamCreditBalance(Base):
