@@ -1895,6 +1895,17 @@ one proposed let a client *spend* against an id it already had, none let a
 client *discover* one — fixed by adding `GET /tools`, `GET /plans`, and
 `GET /billing/credit-packs` before implementation ever started.
 
+A second review pass on Spec B, checking the whole billing flow end to end
+rather than each piece in isolation, found two real bugs before either had a
+chance to ship: the original refill design would have left a brand-new
+signup (or someone who'd just paid) waiting up to a day for their first
+credits, cron-gated with nothing synchronous; and Spec B had no migration
+covering teams created by Spec A before Spec B existed. Both fixed. The same
+pass also surfaced three things the spec had structurally room for but never
+described — webhook idempotency, atomic balance updates, and what happens
+when someone wants to cancel or switch plans — and added them rather than
+leaving them implicit.
+
 Neither spec is implemented yet. This entry exists so "why does this book
 suddenly know about Razorpay" has an answer.
 
@@ -2042,9 +2053,23 @@ source of truth, not duplicated here.
   retroactively affect a job already running.
 - Monthly credit refills run off an **independent arq cron job**, not
   provider webhooks — a yearly Razorpay subscription only fires one charge
-  event a year, which can't drive a monthly refill on its own.
-- New routes: `GET /plans`, `GET /billing/credit-packs`, `POST /billing/subscribe`,
-  `POST /billing/topup`, `POST /billing/webhook/{provider}`, `GET /billing/teams/{id}`.
+  event a year, which can't drive a monthly refill on its own. **The very
+  first grant is synchronous, not cron-driven** — a second review pass
+  caught that the original draft would have left a brand-new signup at zero
+  credits for up to a day, waiting on the next daily tick.
+- Webhook processing is **idempotent** (checked against `payments` before any
+  credit grant — providers redeliver events at-least-once) and credit
+  balance updates are **atomic SQL**, not read-then-write — a webhook-driven
+  grant and a worker-driven deduction can land at the same moment, and only
+  deductions are protected by the existing per-team generation lock.
+- New routes: `GET /plans`, `GET /billing/credit-packs`, `POST /billing/subscribe`
+  (doubles as a plan-change when one's already active), `POST /billing/cancel`
+  (effective at period end, never instant), `POST /billing/topup`,
+  `POST /billing/webhook/{provider}` (also handles refunds, reactively —
+  refunds are issued from Razorpay's own dashboard, not our API), `GET /billing/teams/{id}`.
+- A second Alembic migration backfills the Free plan onto every team that
+  already exists by the time this spec ships — Spec A creates real teams
+  before Spec B exists, and nothing else would catch them.
 
 ### 🔵 Every missing API, catalogued
 
