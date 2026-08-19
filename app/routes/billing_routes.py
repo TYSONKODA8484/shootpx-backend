@@ -6,7 +6,7 @@ from app.core.db import get_db
 from app.core.payment_provider import payment_provider
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.billing import CancelRequest, CreditPackOut, PlanOut, SubscribeRequest, TopupRequest
+from app.schemas.billing import CancelRequest, ConfirmPaymentRequest, CreditPackOut, PlanOut, SubscribeRequest, TopupRequest
 
 router = APIRouter(tags=["billing"])
 
@@ -46,6 +46,19 @@ def topup(
     current_user: User = Depends(get_current_user),
 ):
     return billing_controller.create_topup_order(db, current_user, payload.team_id, payload.credit_pack_id)
+
+
+@router.post("/billing/confirm-payment")
+def confirm_payment(
+    payload: ConfirmPaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Called immediately after Razorpay Checkout's own success handler
+    fires — verifies and credits the payment without waiting on (or
+    requiring) a webhook. See billing_controller.confirm_payment's
+    docstring for why this exists alongside, not instead of, the webhook."""
+    return billing_controller.confirm_payment(db, current_user, payload.model_dump())
 
 
 @router.get("/billing/teams/{team_id}")

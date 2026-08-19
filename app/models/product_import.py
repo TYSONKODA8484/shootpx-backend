@@ -13,6 +13,15 @@ class ProductImportStatus(str, enum.Enum):
     failed = "failed"
 
 
+PRODUCT_IMPORT_FEATURE_TYPE = "product_import"  # the tools.feature_type this
+# domain is registered under (seeded by migration, not the app/tools/
+# registry — product imports don't go through AIProvider/GenerationJob, so
+# they can't self-register via ToolSpec the way on_model_shots/ugc do; this
+# is a plain Tool row inserted directly, existing purely for GET /tools
+# discovery and DB-editable credit_cost/is_active. sync_tools_to_db() never
+# touches it (it only upserts rows matching the in-memory registry).
+
+
 class ProductImport(Base):
     """One row per 'scrape this product URL' request — a separate table
     from GenerationJob on purpose: its output doesn't fit that shape

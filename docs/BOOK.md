@@ -1542,6 +1542,14 @@ before ever calling `/generate` — a gap this exact chapter's own spec caught
 in self-review: every route that existed let you *spend* against a
 `feature_type` you already knew, none let you *discover* one.
 
+Not just generation tools, either — [Chapter 14](#chapter-14--product-imports)'s
+`product_import` is a real row in this same table, listed here too, even
+though it has no `ToolSpec`/`AIProvider` and never goes through
+`GenerationJob`. The table's job was always "what's discoverable and what
+does it cost," not "what runs through the generation pipeline" — those
+turned out to be separable, and worth separating, the first time something
+needed the former without the latter.
+
 ---
 
 ## Chapter 13 — Database Migrations
@@ -1630,18 +1638,35 @@ on the page downloaded and saved as a real `Asset`** — immediately usable as
 
 ### 🟢 Costs credits, same system as generation *(new)*
 
-A flat **5 credits per pull** (`settings.PRODUCT_IMPORT_CREDIT_COST`) — a
-plain settings constant, not routed through [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing)'s
-tiered `resolve_credit_cost()`, since a product import has no
-`feature_type`/model concept to key off (deliberately, per this chapter's
-"a different external system" framing). `product_import_controller.py`
-checks the team's balance — accounting for credits already held by other
-in-flight imports, the exact same race-condition fix Chapter 17 documents
-for generation — before creating the row; `app/worker.py`'s `_poll_import`
-deducts on success, in the same commit as marking the row `done`.
-Verified for real: a fresh 5-credit team pulled a real Amazon product page,
-landed at 0 credits, a second pull was rejected with 402, buying a top-up
-brought the balance back, and pulling succeeded again.
+A flat **5 credits per pull** — resolved from a real `Tool` row
+(`feature_type="product_import"`), the exact same DB-editable
+`credit_cost`/`is_active` mechanism [Chapter 12](#chapter-12--the-tool-registry)
+built for generation tools, not a separate hardcoded constant. That row
+isn't self-registered via `app/tools/`'s `ToolSpec`/`register()` pattern —
+product imports have no `AIProvider`, don't go through `GenerationJob`, so
+there's no `ToolSpec` for them to register with — it's inserted directly by
+a data migration instead, and `sync_tools_to_db()` never touches it (that
+function only upserts rows matching the in-memory registry, which this
+deliberately isn't part of). The payoff: **`GET /tools` lists it** right
+alongside `on_model_shots`/`ugc`, and its cost/kill-switch are editable in
+the database with no redeploy, exactly like every other tool.
+
+> 🐛 **This wasn't the original design.** The first version gave product
+> imports their own `settings.PRODUCT_IMPORT_CREDIT_COST` constant — inert,
+> hardcoded, and invisible to `GET /tools`. Caught immediately when tested
+> against a real account: `GET /tools` only listed the two generation
+> tools, with no way to discover this one existed or what it cost.
+> Corrected to reuse the `tools` table rather than inventing a second,
+> inconsistent mechanism for the same concept.
+
+`product_import_controller.py` checks the team's balance — accounting for
+credits already held by other in-flight imports, the exact same
+race-condition fix Chapter 17 documents for generation — before creating
+the row; `app/worker.py`'s `_poll_import` deducts on success, in the same
+commit as marking the row `done`. Verified for real: a fresh 5-credit team
+pulled a real Amazon product page, landed at 0 credits, a second pull was
+rejected with 402, buying a top-up brought the balance back, and pulling
+succeeded again.
 
 ### Three decisions, each made explicitly
 
@@ -2127,6 +2152,45 @@ against `payments` before granting anything.
   `is_active`, not deleted — the retire-don't-delete pattern this column
   exists for).
 
+### 🐛 A fourth bug, the most consequential one: webhooks alone don't work in local dev at all
+
+Every verification pass up to this point used a **script-simulated
+webhook** — a correctly-signed HTTP request POSTed directly at
+`/billing/webhook/razorpay`. That proved the *handler* logic was correct.
+It never proved a **real** Checkout completion could actually reach this
+codebase — and it can't: Razorpay's servers deliver webhooks to a publicly
+reachable URL, and `http://localhost:8000` isn't one. The first time a real
+person clicked through a real Checkout popup in a real browser, the payment
+succeeded genuinely on Razorpay's side and **the balance never moved** —
+exactly the report that surfaced this.
+
+**Fixed with a second, independent confirmation path**, not a workaround
+for the webhook — `POST /billing/confirm-payment`. Razorpay Checkout's own
+`handler` callback (which already fires client-side on success, no webhook
+involved) now calls it immediately, passing back
+`razorpay_payment_id`/`razorpay_order_id` or `razorpay_subscription_id`/
+`razorpay_signature`. The backend verifies that signature itself —
+`verify_order_payment`/`verify_subscription_payment`
+(`core/payment_provider.py`), a legitimate, separately-documented Razorpay
+verification scheme, nothing invented — then fetches the order/subscription
+back from Razorpay's API to recover the `notes` (`fetch_order`/
+`fetch_subscription`), and applies the **exact same crediting logic** the
+webhook uses. `_credit_subscription_charge`/`_credit_topup`
+(`billing_controller.py`) were extracted specifically so both paths share
+one implementation rather than two that could drift — same idempotency
+guard either way, so it's safe if a real deployment eventually has both a
+working webhook *and* this client confirmation firing for the same payment.
+
+This isn't a local-dev-only hack: an instant, webhook-independent
+confirmation is genuinely good practice even in production, since webhook
+delivery can lag or occasionally fail — this is the fast path, the webhook
+remains the durable one.
+
+Verified by recovering two **real** payments from this exact conversation —
+a subscription and a top-up that had genuinely succeeded on Razorpay but
+sat uncredited — confirming both, watching the balance jump correctly, and
+confirming a re-submitted confirmation of the same payment is a no-op.
+
 ---
 ---
 
@@ -2403,6 +2467,51 @@ found and fixed along the way — neither was an application bug.
 
 Test console gained an eighth section for product imports; none existed
 before this entry despite the feature having existed since Era 2.
+
+---
+
+## Era 8 — Two More Real Bugs, Found by the User's Own Real Usage *(2026-08-19)*
+
+Same day. The user tried the actual product console themselves — not a
+script — and reported two things broken that every prior verification pass
+had missed:
+
+1. `product_import` didn't appear in `GET /tools` and was priced by a
+   hardcoded settings constant instead of the DB-editable mechanism every
+   other tool uses.
+2. **Real Razorpay payments they completed through the actual Checkout UI
+   never credited their account at all** — a subscription and a top-up,
+   both genuinely paid, balance still zero.
+
+**Bug 1** was a genuine design inconsistency, fixed by giving
+`product_import` a real row in the `tools` table (inserted by migration,
+since it has no `ToolSpec` to self-register with) — see
+[Chapter 12](#chapter-12--the-tool-registry) and
+[Chapter 14](#chapter-14--product-imports).
+
+**Bug 2 was the most consequential bug of the whole session.** Every
+webhook check up to this point — Era 6's 29 checks, Era 7's 15 — used a
+script that POSTed a correctly-signed webhook payload directly. That
+proved the handler logic. It never proved Razorpay could actually *reach*
+this server, and it can't: `localhost` isn't publicly reachable, so a real
+Checkout completion had genuinely nowhere to report to. Full account,
+including the fix (a second, independent, webhook-free confirmation path)
+in [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing).
+
+Verified two ways: a fresh real Razorpay order proved the new
+`POST /billing/confirm-payment` path works going forward, and — better
+proof than any synthetic test could offer — **the user's own two real,
+already-completed payments were recovered live**, using their actual
+payment ids and signatures from earlier in this same conversation. Balance
+went from 0 to 110 (100 from the recovered subscription + 10 from the
+recovered top-up), plan flipped to `Monthly 100`, status to `active`.
+Re-confirming either payment a second time correctly changed nothing.
+
+Four real bugs now, across three sessions of actually running the
+product rather than reading the code: the credit race, the missing
+top-up webhook handler, the tools-table inconsistency, and this one — the
+most fundamental, since it meant paying customers could pay and receive
+nothing, and nothing anywhere would have logged an error saying so.
 
 ---
 ---
@@ -2972,6 +3081,7 @@ shootpx-backend/
 | `POST` | `/billing/subscribe` | ✅ **owner** | 🟢 New subscription, or a plan change if one's already active |
 | `POST` | `/billing/cancel` | ✅ **owner** | 🟢 Effective at `current_period_end`, never instant |
 | `POST` | `/billing/topup` | ✅ member | 🟢 One-off credit purchase |
+| `POST` | `/billing/confirm-payment` | ✅ member | 🟢 Client-side confirmation, no webhook needed — verifies the payment itself and credits it. See Chapter 17 (Era 8) |
 | `POST` | `/billing/webhook/{provider}` | — (signature-verified) | 🟢 No session cookie — the provider calls this directly. Idempotent |
 | `GET` | `/billing/teams/{id}` | ✅ member | 🟢 Plan, balance, subscription status, recent ledger entries |
 
@@ -3112,14 +3222,16 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 **End of the ShootPX Backend Book.**
 
 *Last chapter: [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) ·
-Last timeline entry: Era 7, 2026-08-19 — both specs built, product imports
-wired into the credit system, all four verified live against real
-infrastructure (Postgres, Redis, Firebase, a real Razorpay test-mode
-account, and a real running product-scrapper instance), 60 total
-verification checks across four scripts, zero mocked, three real bugs found
-and fixed by actually running the paid flows rather than trusting the code.
-Every gap identified this session either has a spec, is built, or is
-explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
+Last timeline entry: Era 8, 2026-08-19 — both specs built, product imports
+wired into the credit system with real discoverability, and real payments
+made by an actual user through the actual UI, not a script, surfaced the
+session's most important bug: webhooks alone don't work without a publicly
+reachable URL, so nothing was crediting anyone. Fixed with a second,
+independent, webhook-free confirmation path, and proven by recovering the
+user's own two real payments live. Four real bugs found this session by
+actually running the product — none by re-reading code. Every gap
+identified either has a spec, is built, or is explicitly catalogued as not
+yet spec'd (Part VI, Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 

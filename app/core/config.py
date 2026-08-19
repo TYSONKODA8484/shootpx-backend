@@ -75,10 +75,6 @@ class Settings(BaseSettings):
     # 8501` from that repo.
     PRODUCT_SCRAPER_URL: str = "http://localhost:8501"
     PRODUCT_IMPORT_POLL_INTERVAL_SECONDS: int = 2
-    PRODUCT_IMPORT_CREDIT_COST: int = 5  # flat cost per URL pull — product
-    # imports have no feature_type/model concept (Chapter 14 — deliberately
-    # not a GenerationJob), so this is a simple settings constant rather
-    # than routed through core/pricing.py's tiered resolve_credit_cost().
     PRODUCT_IMPORT_TIMEOUT_SECONDS: int = 120  # extract_product() itself
     # tops out around 25s; this is a generous ceiling above that, not a
     # tuned value — mirrors GENERATION_TIMEOUT_SECONDS's role for jobs.

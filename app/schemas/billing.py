@@ -39,6 +39,18 @@ class TopupRequest(BaseModel):
     credit_pack_id: str
 
 
+class ConfirmPaymentRequest(BaseModel):
+    """What Razorpay Checkout's own `handler` callback hands back — passed
+    straight through so we can verify it ourselves (core/payment_provider.py's
+    verify_order_payment/verify_subscription_payment), no webhook needed.
+    Exactly one of razorpay_order_id / razorpay_subscription_id is set,
+    depending on whether this was a top-up or a subscription."""
+    razorpay_payment_id: str
+    razorpay_order_id: str | None = None
+    razorpay_subscription_id: str | None = None
+    razorpay_signature: str
+
+
 class CheckoutOut(BaseModel):
     """Whatever the provider's checkout needs — deliberately a free-form
     dict on the provider side (core/payment_provider.py), typed loosely

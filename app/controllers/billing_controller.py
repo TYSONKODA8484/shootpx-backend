@@ -179,48 +179,132 @@ def _downgrade_to_free(db: Session, team_id: str) -> None:
     db.commit()
 
 
+def _credit_subscription_charge(
+    db: Session, provider: str, provider_subscription_id: str, provider_payment_id: str | None,
+    amount: int, currency: str,
+) -> dict:
+    """Shared by BOTH the webhook handler (subscription.activated/charged)
+    and confirm_payment (the client-side path, for when no publicly
+    reachable webhook URL exists — see BOOK.md Chapter 17's "why webhooks
+    alone aren't enough for local dev" discussion). Idempotent: checked
+    against `payments` before granting anything, so it's safe for either
+    path, or both, to call this for the same payment."""
+    if provider_payment_id and db.query(Payment).filter(Payment.provider_payment_id == provider_payment_id).first():
+        return {"status": "already_processed"}
+
+    sub = db.query(TeamSubscription).filter(TeamSubscription.provider_subscription_id == provider_subscription_id).first()
+    if sub is None:
+        return {"status": "unknown_subscription"}
+
+    is_first_charge = sub.current_period_end is None
+    sub.status = SubscriptionStatus.active.value
+    sub.current_period_end = datetime.utcnow() + timedelta(days=30)
+
+    if provider_payment_id:
+        db.add(Payment(
+            team_id=sub.team_id, provider=provider, provider_payment_id=provider_payment_id,
+            provider_subscription_id=provider_subscription_id,
+            amount=amount, currency=currency,
+            status=PaymentStatus.captured.value, kind=PaymentKind.subscription_charge.value,
+        ))
+
+    if is_first_charge:
+        # Synchronous grant for the FIRST charge only — every subsequent
+        # cycle (monthly or yearly) is granted by the refill cron instead,
+        # never by this path, so the two mechanisms never double-grant the
+        # same month.
+        plan = db.get(Plan, sub.plan_id)
+        apply_credit_delta(db, sub.team_id, plan.credit_allowance, reason=CreditReason.plan_grant.value, reference_id=provider_payment_id)
+        sub.next_credit_refill_at = add_one_month(datetime.utcnow())
+
+    db.commit()
+    return {"status": "processed"}
+
+
+def _credit_topup(
+    db: Session, provider: str, provider_payment_id: str, notes: dict, amount: int, currency: str,
+) -> dict:
+    """Shared by both the webhook handler (payment.captured) and
+    confirm_payment. `notes` (team_id/credit_pack_id/credit_amount) is
+    whatever create_topup_order attached at order-creation time —
+    round-tripped back by Razorpay either on the webhook payload or via a
+    fresh fetch_order() call, same data either way."""
+    if "credit_pack_id" not in notes:
+        return {"status": "ignored", "reason": "not a top-up payment"}
+
+    if provider_payment_id and db.query(Payment).filter(Payment.provider_payment_id == provider_payment_id).first():
+        return {"status": "already_processed"}
+
+    team_id = notes.get("team_id")
+    credit_amount = int(notes.get("credit_amount", 0))
+
+    db.add(Payment(
+        team_id=team_id, provider=provider, provider_payment_id=provider_payment_id,
+        provider_order_id=notes.get("order_id"),
+        amount=amount, currency=currency,
+        status=PaymentStatus.captured.value, kind=PaymentKind.topup.value,
+    ))
+    apply_credit_delta(db, team_id, credit_amount, reason=CreditReason.topup_purchase.value, reference_id=provider_payment_id)
+    db.commit()
+    return {"status": "processed"}
+
+
+def confirm_payment(db: Session, current_user: User, payload: dict) -> dict:
+    """The CLIENT-SIDE confirmation path — called by the test console (or a
+    real frontend) immediately after Razorpay Checkout's own `handler`
+    callback fires, instead of waiting for a webhook. Local dev has no
+    publicly reachable URL for Razorpay to deliver a webhook to at all, so
+    without this, a real successful payment would silently never credit
+    anyone — exactly the bug this was added to fix. Verifies the payment
+    itself (a legitimate, provider-documented signature scheme, distinct
+    from the webhook's), independent of whether a webhook ever arrives —
+    genuinely useful in production too, as an instant-confirmation path
+    that doesn't wait on webhook delivery. Idempotency (shared with the
+    webhook path via _credit_subscription_charge/_credit_topup) means it's
+    safe if both paths end up firing for the same payment."""
+    payment_id = payload.get("razorpay_payment_id")
+    order_id = payload.get("razorpay_order_id")
+    subscription_id = payload.get("razorpay_subscription_id")
+    signature = payload.get("razorpay_signature")
+
+    if not payment_id or not signature or (not order_id and not subscription_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing required payment confirmation fields")
+
+    if subscription_id:
+        if not payment_provider.verify_subscription_payment(subscription_id, payment_id, signature):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
+        sub_entity = payment_provider.fetch_subscription(subscription_id)
+        get_membership(db, sub_entity.get("notes", {}).get("team_id", ""), current_user.id)
+        return _credit_subscription_charge(
+            db, "razorpay", subscription_id, payment_id,
+            amount=sub_entity.get("plan", {}).get("item", {}).get("amount", 0), currency="INR",
+        )
+
+    if not payment_provider.verify_order_payment(order_id, payment_id, signature):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
+    order_entity = payment_provider.fetch_order(order_id)
+    notes = dict(order_entity.get("notes") or {})
+    notes["order_id"] = order_id
+    get_membership(db, notes.get("team_id", ""), current_user.id)
+    return _credit_topup(db, "razorpay", payment_id, notes, amount=order_entity.get("amount", 0), currency=order_entity.get("currency", "INR"))
+
+
 def process_webhook_event(db: Session, provider: str, event: str, payload: dict) -> dict:
     """Idempotent: checks `payments` for the event's own payment id BEFORE
     granting anything or changing state — providers redeliver webhook
-    events at-least-once, never exactly-once."""
+    events at-least-once, never exactly-once. Same crediting logic as
+    confirm_payment (the client-side path) via the shared
+    _credit_subscription_charge/_credit_topup helpers — this is the path
+    that matters once a real, publicly reachable deployment exists."""
     entity = payload.get("payload", {})
 
     if event in ("subscription.activated", "subscription.charged"):
         sub_entity = entity.get("subscription", {}).get("entity", {})
         payment_entity = entity.get("payment", {}).get("entity", {})
-        provider_subscription_id = sub_entity.get("id")
-        provider_payment_id = payment_entity.get("id")
-
-        if provider_payment_id and db.query(Payment).filter(Payment.provider_payment_id == provider_payment_id).first():
-            return {"status": "already_processed"}  # idempotency guard
-
-        sub = db.query(TeamSubscription).filter(TeamSubscription.provider_subscription_id == provider_subscription_id).first()
-        if sub is None:
-            return {"status": "unknown_subscription"}
-
-        is_first_charge = sub.current_period_end is None
-        sub.status = SubscriptionStatus.active.value
-        sub.current_period_end = datetime.utcnow() + timedelta(days=30)
-
-        if provider_payment_id:
-            db.add(Payment(
-                team_id=sub.team_id, provider=provider, provider_payment_id=provider_payment_id,
-                provider_subscription_id=provider_subscription_id,
-                amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
-                status=PaymentStatus.captured.value, kind=PaymentKind.subscription_charge.value,
-            ))
-
-        if is_first_charge:
-            # Synchronous grant for the FIRST charge only — every
-            # subsequent cycle (monthly or yearly) is granted by the
-            # refill cron instead, never by this webhook, so the two
-            # mechanisms never double-grant the same month.
-            plan = db.get(Plan, sub.plan_id)
-            apply_credit_delta(db, sub.team_id, plan.credit_allowance, reason=CreditReason.plan_grant.value, reference_id=provider_payment_id)
-            sub.next_credit_refill_at = add_one_month(datetime.utcnow())
-
-        db.commit()
-        return {"status": "processed"}
+        return _credit_subscription_charge(
+            db, provider, sub_entity.get("id"), payment_entity.get("id"),
+            amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
+        )
 
     if event == "subscription.cancelled":
         sub_entity = entity.get("subscription", {}).get("entity", {})
@@ -240,31 +324,14 @@ def process_webhook_event(db: Session, provider: str, event: str, payload: dict)
     if event == "payment.captured":
         # A ONE-TIME order (top-up) succeeding — subscription charges are
         # handled entirely by the subscription.activated/charged branch
-        # above, never here. Identified by `notes.credit_pack_id`, which
-        # create_topup_order always sets on the order/payment at creation
-        # time — Razorpay round-trips notes back on the payment entity, so
-        # no local "pending order" row is needed to recover team_id/amount.
+        # above, never here.
         payment_entity = entity.get("payment", {}).get("entity", {})
-        notes = payment_entity.get("notes") or {}
-        if "credit_pack_id" not in notes:
-            return {"status": "ignored", "reason": "not a top-up payment"}
-
-        provider_payment_id = payment_entity.get("id")
-        if provider_payment_id and db.query(Payment).filter(Payment.provider_payment_id == provider_payment_id).first():
-            return {"status": "already_processed"}
-
-        team_id = notes.get("team_id")
-        credit_amount = int(notes.get("credit_amount", 0))
-
-        db.add(Payment(
-            team_id=team_id, provider=provider, provider_payment_id=provider_payment_id,
-            provider_order_id=payment_entity.get("order_id"),
+        notes = dict(payment_entity.get("notes") or {})
+        notes.setdefault("order_id", payment_entity.get("order_id"))
+        return _credit_topup(
+            db, provider, payment_entity.get("id"), notes,
             amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
-            status=PaymentStatus.captured.value, kind=PaymentKind.topup.value,
-        ))
-        apply_credit_delta(db, team_id, credit_amount, reason=CreditReason.topup_purchase.value, reference_id=provider_payment_id)
-        db.commit()
-        return {"status": "processed"}
+        )
 
     if event == "payment.failed":
         return {"status": "acknowledged"}  # subscription.halted (Razorpay's

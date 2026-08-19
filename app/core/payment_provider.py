@@ -74,6 +74,34 @@ class PaymentProvider(ABC):
         BEFORE any event is processed — see routes/billing_routes.py."""
         ...
 
+    @abstractmethod
+    def verify_order_payment(self, order_id: str, payment_id: str, signature: str) -> bool:
+        """Client-side confirmation path (billing_controller.confirm_payment)
+        — verifies a one-time-order payment WITHOUT needing a webhook to
+        have been delivered. A legitimate, provider-documented verification
+        method (a different signature scheme than the webhook's), not a
+        workaround — genuinely useful even with webhooks configured, as an
+        instant-confirmation path that doesn't wait on webhook delivery."""
+        ...
+
+    @abstractmethod
+    def verify_subscription_payment(self, subscription_id: str, payment_id: str, signature: str) -> bool:
+        """Same idea as verify_order_payment, for a subscription's first
+        authorization payment."""
+        ...
+
+    @abstractmethod
+    def fetch_order(self, order_id: str) -> dict[str, Any]:
+        """The order's own record — read back to recover the `notes` set at
+        creation time (team_id, credit_pack_id, credit_amount), since the
+        client-confirmation callback only hands us ids and a signature."""
+        ...
+
+    @abstractmethod
+    def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:
+        """Same idea as fetch_order, for a subscription's notes (team_id, plan_id)."""
+        ...
+
 
 class RazorpayProvider(PaymentProvider):
     def __init__(self) -> None:
@@ -132,6 +160,32 @@ class RazorpayProvider(PaymentProvider):
             return True
         except razorpay.errors.SignatureVerificationError:
             return False
+
+    def verify_order_payment(self, order_id: str, payment_id: str, signature: str) -> bool:
+        try:
+            return self._client.utility.verify_payment_signature({
+                "razorpay_order_id": order_id,
+                "razorpay_payment_id": payment_id,
+                "razorpay_signature": signature,
+            })
+        except razorpay.errors.SignatureVerificationError:
+            return False
+
+    def verify_subscription_payment(self, subscription_id: str, payment_id: str, signature: str) -> bool:
+        try:
+            return self._client.utility.verify_subscription_payment_signature({
+                "razorpay_subscription_id": subscription_id,
+                "razorpay_payment_id": payment_id,
+                "razorpay_signature": signature,
+            })
+        except razorpay.errors.SignatureVerificationError:
+            return False
+
+    def fetch_order(self, order_id: str) -> dict[str, Any]:
+        return self._client.order.fetch(order_id)
+
+    def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:
+        return self._client.subscription.fetch(subscription_id)
 
 
 # The one line every caller goes through. Swap for a different provider

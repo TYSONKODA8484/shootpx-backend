@@ -437,6 +437,21 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
   // Opens Razorpay's real hosted checkout modal (test mode) — same "a JS
   // SDK glue for whatever needs a real browser popup" pattern this console
   // already uses for Firebase login.
+  // After a real Checkout completes, Razorpay hands this callback the
+  // payment id + signature. There is no publicly reachable URL for
+  // Razorpay's own webhook to reach localhost, so WITHOUT this call the
+  // payment would succeed on Razorpay's side and never get credited here —
+  // that was a real bug, caught by actually clicking through this flow.
+  // See BOOK.md Chapter 17.
+  async function confirmPayment(response) {
+    const res = await fetch(`${BACKEND_URL}/billing/confirm-payment`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(response),
+    });
+    log("POST /billing/confirm-payment", await res.json());
+  }
+
   function openRazorpayCheckout(checkout, description) {
     const rzp = new Razorpay({
       key: checkout.key_id,
@@ -446,7 +461,10 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
       currency: checkout.currency,
       name: "ShootPX (test mode)",
       description,
-      handler: (response) => log("Razorpay checkout completed", response),
+      handler: (response) => {
+        log("Razorpay checkout completed", response);
+        confirmPayment(response);
+      },
       modal: { ondismiss: () => log("Razorpay checkout", { message: "closed without paying" }) },
     });
     rzp.open();
