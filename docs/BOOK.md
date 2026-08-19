@@ -2191,6 +2191,43 @@ a subscription and a top-up that had genuinely succeeded on Razorpay but
 sat uncredited — confirming both, watching the balance jump correctly, and
 confirming a re-submitted confirmation of the same payment is a no-op.
 
+### 🐛 A fifth bug: cancel, then re-subscribe, and the credits silently vanish
+
+`create_subscription` reuses one team's single `TeamSubscription` row
+across every subscription it ever has (`team_id` is unique on that table)
+— correct, by design. But the branch that creates a genuinely **new**
+Razorpay subscription (because the existing row isn't currently `active` —
+e.g. it was cancelled) only ever overwrote `provider_subscription_id`. It
+never touched `current_period_end`, which was still sitting at whatever
+the **previous, cancelled** subscription's cycle end was.
+
+`_credit_subscription_charge` decides "is this the first charge" with
+exactly one check: `current_period_end is None`. With the stale value from
+the old subscription still in place, that check came back `False` for the
+**new** subscription's actual first charge — so it was silently treated as
+a routine renewal (which the cron handles, not this path) and the 100
+credits were never granted. No error, no rejection — the payment succeeded,
+the webhook/confirmation processed cleanly, and nothing was wrong-looking
+about any single response. Only the missing credits gave it away.
+
+Found from a real report, not a script: a real cancel, then a real
+re-subscribe to the same plan, and the balance never moved. Fixed by
+resetting **both** `current_period_end` and `status` back to "pending"
+every time this row is reused for a subscription that isn't the one that
+originally created it — not just the first time the row is created.
+
+Verified by reproducing the exact sequence — subscribe, credit, cancel,
+re-subscribe, confirm the row's `current_period_end` is actually cleared
+(not just trusting the next charge to work), then confirm the new
+subscription's first charge grants credits again. 11 checks, all passing.
+
+This is the fifth real bug this session found by actually running the
+product end to end rather than trusting the code once it compiled and one
+happy-path test passed — worth naming as a pattern: every one of the five
+lived exactly at a state *transition* (first sign-in vs. re-login, first
+charge vs. renewal, active vs. cancelled-then-renewed) that a single linear
+test never exercises twice.
+
 ---
 ---
 
@@ -2512,6 +2549,38 @@ product rather than reading the code: the credit race, the missing
 top-up webhook handler, the tools-table inconsistency, and this one — the
 most fundamental, since it meant paying customers could pay and receive
 nothing, and nothing anywhere would have logged an error saying so.
+
+---
+
+## Era 9 — A Fifth Bug: Cancel, Then Re-Subscribe, Credits Vanish *(2026-08-19)*
+
+Same day, minutes after Era 8's recovery. The user tested the natural next
+step — cancel a subscription, then subscribe again — and reported it
+plainly: "I bought 100 credits but didn't get them in the subscription."
+
+Diagnosed by reading their team's actual `team_subscriptions` and
+`payments` rows directly rather than guessing from the console log:
+exactly one subscription payment had ever been credited (the one manually
+recovered in Era 8); the subscription was `cancelled`; nothing about a
+second charge existed anywhere. Root cause and fix are in
+[Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing)'s
+fifth bug callout — `create_subscription` reused the team's subscription
+row for a genuinely new Razorpay subscription without clearing
+`current_period_end`, so the new subscription's first charge was
+misclassified as a routine renewal and silently never credited.
+
+Verified by reproducing the exact sequence end to end — subscribe, credit,
+cancel, re-subscribe, and this time explicitly asserting the row's
+`current_period_end` actually gets cleared (not just hoping the next step
+works), then confirming the second subscription's first charge grants
+credits again. 11 checks, all passing.
+
+Fifth real bug this session, and a pattern worth stating plainly: **every
+one of the five lived at a state transition** — first sign-in vs.
+re-login, first charge vs. renewal, active vs. cancelled-then-renewed —
+that a single straight-through test path never exercises twice. Verifying
+"it works once" is necessary and was done for all five; it was never
+sufficient on its own.
 
 ---
 ---
@@ -3222,16 +3291,17 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 **End of the ShootPX Backend Book.**
 
 *Last chapter: [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) ·
-Last timeline entry: Era 8, 2026-08-19 — both specs built, product imports
-wired into the credit system with real discoverability, and real payments
-made by an actual user through the actual UI, not a script, surfaced the
-session's most important bug: webhooks alone don't work without a publicly
-reachable URL, so nothing was crediting anyone. Fixed with a second,
-independent, webhook-free confirmation path, and proven by recovering the
-user's own two real payments live. Four real bugs found this session by
-actually running the product — none by re-reading code. Every gap
-identified either has a spec, is built, or is explicitly catalogued as not
-yet spec'd (Part VI, Appendix B).*
+Last timeline entry: Era 9, 2026-08-19 — both specs built, product imports
+wired into the credit system with real discoverability, real payments made
+by an actual user through the actual UI (not a script) surfacing this
+session's two most important bugs — webhooks alone don't work without a
+publicly reachable URL, and re-subscribing after a cancellation silently
+never credited anyone — both fixed and verified against the user's own
+real account and real re-created scenarios. Five real bugs found this
+session, every one of them by actually running the product at a state
+transition a straight-through test never exercises twice; none found by
+re-reading code alone. Every gap identified either has a spec, is built, or
+is explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 

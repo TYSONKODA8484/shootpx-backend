@@ -99,7 +99,16 @@ class PaymentProvider(ABC):
 
     @abstractmethod
     def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:
-        """Same idea as fetch_order, for a subscription's notes (team_id, plan_id)."""
+        """Same idea as fetch_order, for a subscription's notes (team_id, plan_id).
+        NOTE: a subscription entity carries no amount/currency field at
+        all — fetch_payment is what has the real charged amount."""
+        ...
+
+    @abstractmethod
+    def fetch_payment(self, payment_id: str) -> dict[str, Any]:
+        """The payment's own record — amount/currency actually charged.
+        Needed for confirm_payment's subscription path specifically: a
+        subscription entity has no amount field, only the payment does."""
         ...
 
 
@@ -186,6 +195,9 @@ class RazorpayProvider(PaymentProvider):
 
     def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:
         return self._client.subscription.fetch(subscription_id)
+
+    def fetch_payment(self, payment_id: str) -> dict[str, Any]:
+        return self._client.payment.fetch(payment_id)
 
 
 # The one line every caller goes through. Swap for a different provider

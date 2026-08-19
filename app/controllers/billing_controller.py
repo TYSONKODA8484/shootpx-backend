@@ -123,6 +123,22 @@ def create_subscription(db: Session, current_user: User, team_id: str, plan_id: 
             next_credit_refill_at=add_one_month(datetime.utcnow()),
         )
         db.add(sub)
+    else:
+        # Re-subscribing after a cancellation (or any non-active prior
+        # state) reuses this team's one TeamSubscription row rather than
+        # creating a second one (team_id is unique). A REAL bug lived
+        # here: current_period_end was left at whatever the PREVIOUS,
+        # now-cancelled subscription's cycle end was, never cleared. The
+        # first charge on THIS new subscription would then land in
+        # _credit_subscription_charge, which decides "is this the first
+        # charge" purely from `current_period_end is None` — with the old
+        # value still sitting there, it wrongly concluded "not the first
+        # charge" and silently skipped the credit grant entirely. Caught
+        # from a real report: a real re-subscribe payment went through,
+        # nothing was ever credited. Reset both here, explicitly, for
+        # every subscription this row is reused for, not just the first.
+        sub.status = SubscriptionStatus.past_due.value
+        sub.current_period_end = None
     sub.plan_id = plan.id
     sub.provider = handle.provider
     sub.provider_subscription_id = handle.provider_subscription_id
@@ -275,9 +291,18 @@ def confirm_payment(db: Session, current_user: User, payload: dict) -> dict:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
         sub_entity = payment_provider.fetch_subscription(subscription_id)
         get_membership(db, sub_entity.get("notes", {}).get("team_id", ""), current_user.id)
+        # A subscription entity carries NO amount/currency field at all —
+        # the real charged amount only exists on the payment itself. The
+        # earlier version guessed at a `plan.item.amount` path that
+        # doesn't exist in Razorpay's actual response shape, silently
+        # recording every subscription payment's amount as 0 — harmless to
+        # crediting (which only ever used credit_allowance, not this
+        # amount), but wrong for `payments` as an audit/reconciliation
+        # record, which is the entire point of that table.
+        payment_entity = payment_provider.fetch_payment(payment_id)
         return _credit_subscription_charge(
             db, "razorpay", subscription_id, payment_id,
-            amount=sub_entity.get("plan", {}).get("item", {}).get("amount", 0), currency="INR",
+            amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
         )
 
     if not payment_provider.verify_order_payment(order_id, payment_id, signature):
