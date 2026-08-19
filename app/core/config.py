@@ -106,5 +106,19 @@ class Settings(BaseSettings):
     EMAIL_FROM_NAME: str = "ShootPX"
     EMAIL_FROM_ADDRESS: str = ""
 
+    # Razorpay (core/payment_provider.py) — the payment provider seam's one
+    # concrete implementation today. RAZORPAY_WEBHOOK_SECRET is a value we
+    # choose, not one Razorpay hands us, used to verify that an incoming
+    # POST /billing/webhook/razorpay request's signature is genuine.
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+
+    # Billing / credits (core/pricing.py, core/credits.py) — how often the
+    # refill cron checks for due grants. Daily is fine for an ongoing
+    # monthly cadence; the FIRST grant for any team is always synchronous,
+    # never waits on this (see create_personal_team / the subscribe flow).
+    CREDIT_REFILL_CRON_HOUR: int = 3  # 03:00 server time, low-traffic default
+
 
 settings = Settings()

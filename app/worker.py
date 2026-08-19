@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from arq import Retry
+from arq import Retry, cron
 from arq.connections import RedisSettings
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session
@@ -69,13 +69,17 @@ from sqlalchemy.orm import Session
 from app.core import product_scraper_client
 from app.core.ai_provider import GenerationFailed, GenerationHandle, GenerationPending
 from app.core.config import settings
+from app.core.credits import add_one_month, apply_credit_delta
 from app.core.db import SessionLocal
 from app.core.product_scraper_client import ScrapeHandle, ScrapePending
 from app.core.storage import storage
 from app.tools import get_tool
 from app.models.asset import Asset, AssetKind, MediaType
+from app.models.credit import CreditReason
 from app.models.generation_job import GenerationJob, JobStatus
+from app.models.plan import Plan
 from app.models.product_import import ProductImport, ProductImportStatus
+from app.models.subscription import SubscriptionStatus, TeamSubscription
 from app.models.team import new_id
 from app.models import invite as invite_models  # noqa: F401  (registers TeamInvite on Base —
 # Team.invites references it by string; SQLAlchemy needs it imported in
@@ -244,6 +248,15 @@ def _poll(db: Session, job: GenerationJob) -> bool:
     job.output_asset_id = output_asset.id
     job.status = JobStatus.done.value
     job.completed_at = datetime.utcnow()
+
+    # Deducted in the SAME commit as the status flip to "done" — never a
+    # separate one. If the process crashes between them, neither happens,
+    # and the next retry redoes both together: a job can never be marked
+    # done without being charged, or charged without being marked done. A
+    # FAILED job (the three branches above) never costs anything.
+    if job.credit_cost:
+        apply_credit_delta(db, job.team_id, -job.credit_cost, reason=CreditReason.generation_spend.value, reference_id=job.id)
+
     db.commit()
     return False
 
@@ -378,8 +391,35 @@ def _poll_import(db: Session, imp: ProductImport) -> bool:
     return False
 
 
+async def refill_due_credits(ctx: dict) -> None:
+    """Runs daily (WorkerSettings.cron_jobs below). Grants a plan's
+    credit_allowance to every team whose next_credit_refill_at has passed —
+    applies UNIFORMLY to Free/monthly/yearly teams alike, one mechanism,
+    no special cases. This is deliberately NOT how a team's FIRST grant
+    happens (that's synchronous — billing_controller.assign_free_plan and
+    the subscription.activated webhook handler) precisely so a brand-new
+    signup never waits on this daily tick for its first credits; this cron
+    only ever handles the SECOND cycle onward. See BOOK.md Chapter 17."""
+    db = SessionLocal()
+    try:
+        due = db.query(TeamSubscription).filter(
+            TeamSubscription.next_credit_refill_at <= datetime.utcnow(),
+            TeamSubscription.status.in_([SubscriptionStatus.active.value, SubscriptionStatus.free.value]),
+        ).all()
+        for sub in due:
+            plan = db.get(Plan, sub.plan_id)
+            if plan is None:
+                continue
+            apply_credit_delta(db, sub.team_id, plan.credit_allowance, reason=CreditReason.plan_grant.value)
+            sub.next_credit_refill_at = add_one_month(sub.next_credit_refill_at)
+        db.commit()
+    finally:
+        db.close()
+
+
 class WorkerSettings:
     functions = [run_generation_job, run_product_import]
+    cron_jobs = [cron(refill_due_credits, hour=settings.CREDIT_REFILL_CRON_HOUR, minute=0, run_at_startup=False)]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
     max_jobs = settings.MAX_CONCURRENT_GENERATIONS
     job_timeout = 300  # per invocation (one lock-wait check, one submit, or

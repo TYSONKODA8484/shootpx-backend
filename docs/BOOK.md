@@ -100,6 +100,7 @@ Every section, table row, and ledger entry in this book carries one of these:
 - [Chapter 14 — Product Imports](#chapter-14--product-imports)
 - [Chapter 15 — Caching](#chapter-15--caching)
 - [Chapter 16 — Testing and the Test Console](#chapter-16--testing-and-the-test-console)
+- [Chapter 17 — Billing: Payments, Credits, Dynamic Pricing](#chapter-17--billing-payments-credits-dynamic-pricing)
 
 **[Part IV — The Timeline](#part-iv--the-timeline)**
 
@@ -1919,6 +1920,178 @@ by hand.
 > nicer for everything except login — becomes fully usable.
 
 ---
+
+## Chapter 17 — Billing: Payments, Credits, Dynamic Pricing
+
+**Status: 🟢 CURRENT** · **Files:** [`core/payment_provider.py`](../app/core/payment_provider.py),
+[`core/pricing.py`](../app/core/pricing.py), [`core/credits.py`](../app/core/credits.py),
+[`controllers/billing_controller.py`](../app/controllers/billing_controller.py),
+[`routes/billing_routes.py`](../app/routes/billing_routes.py)
+· **Full spec:** [`2026-08-19-billing-credits-and-payments-design.md`](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)
+· **Verified:** 29/29 checks against the live server, Postgres, and the
+**real Razorpay test-mode API** — not a mock, an actual test-mode plan,
+subscription, order, and cancellation, all created through Razorpay's own
+servers.
+
+### The problem
+
+A real paying customer showed up wanting a concrete tool (Era 4's Timeline
+entry). Money touching the system for the first time forced three decisions
+that had been deferred since the first commit: credits are **per-team**
+(matches every other resource in this app being team-scoped), Razorpay is
+the payment aggregator today but not a permanent commitment, and pricing has
+to vary by model/template eventually without a redesign when that day comes.
+
+### The payment provider seam
+
+The same swappable-seam pattern used for `Storage` and `AIProvider`
+([§8](#8-the-swappable-seam-pattern)), applied a third time:
+
+```python
+class PaymentProvider(ABC):
+    def create_subscription(self, provider_plan_id, notes) -> SubscriptionHandle: ...
+    def create_one_time_order(self, amount, currency, notes) -> OrderHandle: ...
+    def cancel_subscription(self, provider_subscription_id) -> None: ...
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool: ...
+
+payment_provider: PaymentProvider = RazorpayProvider()
+```
+
+Every table that touches a payment record stores **both** `provider` and a
+`provider_*_id` — the exact `GenerationJob.provider`/`external_job_id`
+convention, not a new one invented for billing. Adding Stripe later is a new
+class and new rows with `provider="stripe"` — zero shared logic changes.
+
+### The data model — eight new tables
+
+`plans`, `team_subscriptions`, `team_credit_balances`, `credit_transactions`
+(the append-only audit ledger — the real source of truth, `team_credit_balances`
+is a cache of its running total), `credit_packs`, `payments`, `ai_models`
+(named to avoid colliding with the `app/models/` Python package), `templates`.
+Full column-by-column detail is in the spec; the interesting parts are below.
+
+### The pricing engine
+
+`core/pricing.py`'s `resolve_credit_cost()` — three tiers, in precedence
+order: a template's `credit_cost_override` wins outright if set; otherwise a
+resolved model's `base_credit_cost` (from `ai_models`) is modified by the
+tool's own `pricing_config` (e.g. resolution multipliers); a tool with no
+model concept at all (every tool that exists today) falls straight back to
+`tools.credit_cost`. **The cost is resolved once, at submission, and stored
+on `GenerationJob.credit_cost`** — never recomputed at completion — so an
+admin editing pricing mid-flight can never retroactively change what an
+already-running job costs.
+
+### 🐛 Two real bugs, both caught only by actually running the full flow
+
+**1. The credit-race.** Deducting only on success (a deliberate earlier
+decision — a failed job should never cost anything) has a hole: if `/generate`
+is called several times rapidly, none of the earlier jobs have *completed*
+yet (deduction is async, in the worker), so **every** call sees the same,
+still-full balance and passes the check. This was not a hypothetical — this
+project's own verification script submitted 5 jobs back-to-back against a
+5-credit balance and all 5 were accepted before any of them finished. Fixed
+by `_held_credits()` in `generation_controller.py`: sum
+`credit_cost` across the team's currently-`processing` jobs, and check
+`balance - held >= cost` instead of just `balance >= cost`. The per-team
+generation lock does **not** prevent this — it only serializes the worker's
+*processing*, not how many job rows the API will accept before the first
+one finishes.
+
+**2. Razorpay itself rejects cancelling a subscription that never entered a
+real billing cycle.** A subscription created via the API but never actually
+paid for through a real checkout has no server-side billing cycle for
+Razorpay's `cancel_at_cycle_end` to defer to — it raises
+`BadRequestError("Subscription cannot be cancelled since no billing cycle is
+going on")`. The bug wasn't that error existing — it's that nothing caught
+it, so it crashed into an unhandled 500. Fixed with a new
+`PaymentProviderError` (`core/payment_provider.py`), the same "the
+provider's own message is more useful than anything we'd invent" philosophy
+[Chapter 14](#chapter-14--product-imports) already established for
+`product-scrapper` failures: `RazorpayProvider.cancel_subscription` retries
+immediately (`cancel_at_cycle_end=0`) on that specific error before giving
+up, and `billing_controller.py` converts any remaining
+`PaymentProviderError` into a clean 400, never a crash.
+
+### Credit refills — decoupled from Razorpay's own billing cadence
+
+Razorpay only charges a yearly subscription once a year, so its own
+`subscription.charged` webhook can't drive a *monthly* refill for an annual
+plan. `app/worker.py`'s `refill_due_credits` — an **arq cron job**, runs
+daily — grants a plan's `credit_allowance` to every team whose
+`next_credit_refill_at` has passed, uniformly across Free/monthly/yearly
+plans, one mechanism, no special cases.
+
+**The first grant is never cron-driven.** `billing_controller.assign_free_plan`
+(called from `team_controller.create_personal_team`, synchronously, the
+instant a team exists) and the webhook handler's `subscription.activated`
+branch both grant that first cycle immediately, through the same shared,
+atomic `core/credits.py:apply_credit_delta` the cron itself uses — a
+brand-new signup or a freshly-paying customer never waits up to a day for
+their first credits. Every cycle *after* the first is the cron's job alone;
+the webhook handler deliberately does **not** grant on ordinary renewal
+charges, so the two mechanisms can never double-grant the same month.
+
+`add_one_month()` (`core/credits.py`) is a small stdlib-only helper —
+clamping day-of-month overflow (Jan 31 → Feb 28/29) — rather than a new
+`python-dateutil` dependency for one function, matching this codebase's
+otherwise lean `requirements.txt`.
+
+### Idempotency and atomicity — the two things a payment system cannot skip
+
+**Webhook idempotency:** every event handler checks `payments` for the
+event's own `provider_payment_id` (or, for a refund, `credit_transactions`
+by `reference_id`) **before** granting anything — a redelivered webhook
+(providers deliver at-least-once, never exactly-once) updates nothing
+twice. Verified directly: the same signed `subscription.activated` payload
+delivered twice granted credits exactly once.
+
+**Atomic balance updates:** `core/credits.py:apply_credit_delta` is one
+`INSERT ... ON CONFLICT DO UPDATE SET balance = balance + :amount` — never
+read-then-write in Python. A webhook-driven grant and a worker-driven
+deduction can land at the same moment, and only deductions are protected by
+the per-team generation lock ([Chapter 9](#chapter-9--the-queue-and-the-worker)).
+
+### Enforcement, end to end
+
+- `generation_controller.py`: resolve cost (accounting for held credits,
+  see the bug above), 402 if short, *before* the job exists.
+- `app/worker.py`, `_poll`, on success only: deducts `job.credit_cost` in
+  the **same `db.commit()`** that flips the job to `done` — a mid-crash
+  retry can never charge without completing, or complete without charging.
+- `team_controller.add_member`: hard-blocks past the plan's
+  `max_team_members` with a 403 naming the limit — same "reject, don't
+  silently overage" philosophy as credits.
+
+### Cancellation, plan changes, refunds
+
+`POST /billing/cancel` doesn't downgrade instantly — the team keeps what
+they paid for until `current_period_end`; the eventual downgrade to Free
+happens the same way a `halted` subscription's does.
+`POST /billing/subscribe` on an already-active team is a **plan change**,
+effective at next renewal, no proration (deliberately deferred). Refunds are
+**issued from Razorpay's own dashboard**, never our API — this codebase
+only reacts to the resulting webhook, recording it without clawing back
+credits already spent.
+
+### Discovery routes
+
+`GET /plans` and `GET /billing/credit-packs` exist for the same reason
+`GET /tools` does ([Chapter 12](#chapter-12--the-tool-registry)) — every
+other billing route lets a team *spend* against an id it already knows;
+nothing let a client see what's available until this spec's own review
+caught the gap.
+
+### What's still a placeholder
+
+The seeded `plans` table has exactly one real-money tier (a `Starter` plan,
+created for verification against a genuine Razorpay test-mode plan id) plus
+the Free plan — actual pricing/tiers are business data, not invented here.
+Proration, a real admin UI for editing plans/models/templates, and
+issuing-a-refund-ourselves are all deliberately out of scope — see the
+spec's non-goals for the reasoning behind each.
+
+---
 ---
 
 # Part IV — The Timeline
@@ -2110,6 +2283,49 @@ Spec B (billing) is unstarted — it needs real Razorpay credentials this
 session doesn't have, which the schema/pricing-engine/enforcement code can
 be written and unit-verified without, but the actual subscribe/webhook flow
 genuinely cannot be proven live without them.
+
+---
+
+## Era 6 — Spec B Built Against a Real Razorpay Account *(2026-08-19)*
+
+Same day, immediately after Era 5. Real Razorpay test-mode credentials
+arrived; all eight billing tables, the `PaymentProvider` seam, the pricing
+engine, the credit ledger, the refill cron, and every enforcement point were
+built and verified against them — not mocked.
+
+A real test-mode Razorpay Plan and a Credit Pack were created through
+Razorpay's own API as part of setup, specifically so `POST /billing/subscribe`
+and `POST /billing/topup` could be proven against genuine `sub_...` and
+`order_...` ids, not synthetic ones.
+
+Two real bugs surfaced only by running the complete flow end to end, not by
+reviewing the code in isolation — both documented in full, with the fix, in
+[Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing):
+
+1. A **credit-check race** — 5 rapid `/generate` calls against a 5-credit
+   balance were all accepted, because deduction only happens on success and
+   none of the first jobs had completed yet when the later calls checked
+   their balance. Fixed by accounting for credits already held by the
+   team's in-flight (`processing`) jobs, not just the raw balance.
+2. **Razorpay itself refuses to cancel a subscription that never entered a
+   real billing cycle** — surfaced as an unhandled 500 the first time
+   `POST /billing/cancel` was actually exercised against a subscription this
+   session's own webhook simulation had activated locally but Razorpay's
+   servers had never actually billed. Fixed with a proper
+   `PaymentProviderError` and a same-intent retry, rather than a crash.
+
+Verified with two scripts in the same style as `scripts/test_pipeline.py`:
+29 checks total, covering discovery routes, the Free-plan starter balance,
+credit enforcement (including the race fix), the team-size limit, a real
+subscribe → webhook-confirmed → active flow, a real top-up order, webhook
+**idempotency** (the same signed event delivered twice, credited exactly
+once), a forged-signature rejection, a real cancellation, and — in a
+separate script — the refill cron granting a second cycle's credits with
+the cron running standalone and zero Razorpay events involved.
+
+Test console gained a seventh section wired to Razorpay's real Checkout.js,
+the same "a JS SDK for whatever needs a real browser popup" pattern already
+used for Firebase login.
 
 ---
 ---
@@ -2305,11 +2521,19 @@ tool's `is_active` to `false` directly in Postgres makes `/generate` 400 for
 that `feature_type` while the schema's own 422 for a truly unknown one still
 fires separately.
 
-### 🔵 Planned Chapter B — Billing: Payments, Credits, Dynamic Pricing
+### 🟢 Planned Chapter B — Billing: Payments, Credits, Dynamic Pricing — BUILT
 
-**Status: 🔵 PLANNED** · **Full spec:** [`2026-08-19-billing-credits-and-payments-design.md`](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)
-· **Depends on:** Planned Chapter A (`create_personal_team`, the `tools`
-table, `Tool.default_model_id`)
+**Status: 🟢 BUILT**, same day it was designed (2026-08-19) · **Full spec:**
+[`2026-08-19-billing-credits-and-payments-design.md`](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)
+· **The real, live documentation now lives in
+[Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing)** —
+kept here, unedited, as the historical plan that chapter was built from.
+Verified against the live server + a **real Razorpay test-mode account**
+(29/29 checks) — a genuine test-mode plan, subscription, order, and
+cancellation, not a mock. Two real bugs were found only by running the full
+flow (a credit-check race, and an unhandled Razorpay cancellation error) —
+see Chapter 17's 🐛 callouts, not repeated here since this section predates
+finding them.
 
 **The problem.** There is no billing anywhere in this codebase — `DESIGN.md`
 lists it as explicitly out of scope from day one, and it stayed that way
@@ -2468,7 +2692,7 @@ no spec yet:
 
 | Missing API | Why it matters | Status |
 |---|---|---|
-| `GET /tools`, `GET /plans`, `GET /billing/credit-packs` | Every route added so far lets you *spend* against an id you already know — nothing lets a client *discover* one | ✅ Caught in spec self-review, now in Spec A/B above |
+| `GET /tools`, `GET /plans`, `GET /billing/credit-packs` | Every route added so far lets you *spend* against an id you already know — nothing lets a client *discover* one | ✅ Built and verified live — [Chapter 12](#chapter-12--the-tool-registry) / [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) |
 | API keys for programmatic access | A real B2B customer (see the lingerie-tool example) wants to integrate directly, not click through a browser. Right now the *only* auth path is the Firebase-popup + session-cookie flow — there is no way for a server-to-server caller to authenticate at all | Not yet spec'd |
 | Webhooks for job completion | `GET /jobs` polling works, but every comparable platform also offers "tell me when it's done" instead of making the client poll forever | Not yet spec'd |
 | Asset list / delete | Upload exists; there's no way to browse or remove your own files | Not yet spec'd. ⚠️ Delete requires adding media-cache invalidation at the same time ([Ch. 15](#chapter-15--caching)) |
@@ -2509,7 +2733,6 @@ copy `_template.py`, fill in four fields, add one import line.
 | **Transient vs permanent errors** | A network blip fails a job permanently, same as a real error | Deliberately deferred until a real provider's actual failure modes are known |
 | **Invite-email-mismatch messaging** | Someone invited at one address who signs in with another is silently not joined | Needs invite context in the URL; no frontend to show it in yet |
 | **Imports share generation's job pool** | A burst of imports competes with generation | Split the cap once real traffic shows it's needed |
-| **Billing / subscriptions** | Not started in code | Fully designed — [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
 | **Real frontend** | Only the test console exists | |
 
 ### Things explicitly considered and rejected
@@ -2536,20 +2759,24 @@ copy `_template.py`, fill in four fields, add one import line.
 shootpx-backend/
 ├── alembic.ini                     Alembic config (its sqlalchemy.url is NOT used — see env.py)
 ├── alembic/
-│   ├── env.py                      🟢 Imports the APP's engine + all 7 models
+│   ├── env.py                      🟢 Imports the APP's engine + all 13 models
 │   └── versions/
 │       ├── e6166cbe300b_...py      Baseline — adopts the pre-existing live DB
 │       ├── b55cfad6e50d_...py      Adds product_imports + assets.product_import_id
 │       ├── e3d3552b463c_...py      🟢 Backfills personal teams for pre-existing users
-│       └── d3e31e5bef95_...py      🟢 Adds tools table + generation_jobs.external_job_id/provider
-│                                   (the latter two columns had only ever been hand-patched
-│                                    on the ORIGINAL dev machine, pre-Alembic — a fresh DB
-│                                    never had them until this migration; see Chapter 13)
+│       ├── d3e31e5bef95_...py      🟢 Adds tools table + generation_jobs.external_job_id/provider
+│       │                           (the latter two columns had only ever been hand-patched
+│       │                            on the ORIGINAL dev machine, pre-Alembic — a fresh DB
+│       │                            never had them until this migration; see Chapter 13)
+│       ├── 1fa978c93dc2_...py      🟢 The 8 billing tables + generation_jobs.credit_cost
+│       │                           + tools.default_model_id's FK (deferred from Spec A)
+│       └── baa7b2ede411_...py      🟢 Seeds the Free plan, backfills every existing team onto it
 │
 ├── app/
-│   ├── main.py                     Creates the app, mounts /files, registers 7 routers,
+│   ├── main.py                     Creates the app, mounts /files, registers 8 routers,
 │                                   syncs the tools table at boot
-│   ├── worker.py                   🟢 THE WORKER PROCESS — lock, submit/poll, Retry
+│   ├── worker.py                   🟢 THE WORKER PROCESS — lock, submit/poll, Retry,
+│                                   + the refill_due_credits cron job
 │   │
 │   ├── core/                       ── infrastructure & swappable seams ──
 │   │   ├── config.py               All settings, one Pydantic class
@@ -2559,6 +2786,9 @@ shootpx-backend/
 │   │   ├── email.py                SMTP send (via Resend)
 │   │   ├── storage.py              🔌 Storage interface + LocalStorage
 │   │   ├── ai_provider.py          🔌 AIProvider (submit/poll) + MockAIProvider
+│   │   ├── payment_provider.py     🔌 🟢 PaymentProvider (subscribe/order/cancel/webhook) + RazorpayProvider
+│   │   ├── pricing.py              🟢 resolve_credit_cost() — template override -> model+modifiers -> flat
+│   │   ├── credits.py              🟢 apply_credit_delta() (atomic grant/spend), add_one_month()
 │   │   ├── product_scraper_client.py  submit/poll client for the scraper service
 │   │   ├── queue.py                arq pool + the two enqueue functions
 │   │   ├── cache.py                🟢 Namespaced Redis cache + KNOWN_CACHE_NAMESPACES
@@ -2584,40 +2814,49 @@ shootpx-backend/
 │   │   ├── team.py                 teams + team_members + TeamRole + new_id()
 │   │   ├── invite.py               team_invites (keyed by email)
 │   │   ├── asset.py                assets (upload | generated | imported)
-│   │   ├── generation_job.py       generation_jobs
+│   │   ├── generation_job.py       generation_jobs (+ credit_cost 🟢)
 │   │   ├── product_import.py       product_imports
-│   │   └── tool.py                 🟢 tools (credit_cost/pricing_config/is_active, DB-owned)
+│   │   ├── tool.py                 🟢 tools (credit_cost/pricing_config/is_active, DB-owned)
+│   │   ├── plan.py                 🟢 plans
+│   │   ├── subscription.py         🟢 team_subscriptions
+│   │   ├── credit.py               🟢 team_credit_balances, credit_transactions, credit_packs
+│   │   ├── payment.py              🟢 payments
+│   │   ├── ai_model.py             🟢 ai_models
+│   │   └── template.py             🟢 templates
 │   │
 │   ├── schemas/                    ── Pydantic request/response shapes ──
 │   │   ├── auth.py  teams.py  assets.py  generation.py  product_import.py
-│   │   └── tools.py                 🟢 ToolOut
+│   │   ├── tools.py                 🟢 ToolOut
+│   │   └── billing.py               🟢 PlanOut, CreditPackOut, Subscribe/Cancel/TopupRequest, BillingStatusOut
 │   │
 │   ├── controllers/                ── THE ACTUAL LOGIC ──
 │   │   ├── auth_controller.py      upsert user (now returns is_new too), session cookie
-│   │   ├── team_controller.py      create/list/rename teams, create_personal_team,
-│   │                               add member, accept invites
+│   │   ├── team_controller.py      create/list/rename teams, create_personal_team
+│   │                               (+ assign_free_plan), add member (+ plan limit check), accept invites
 │   │   ├── asset_controller.py     upload
-│   │   ├── generation_controller.py  single + bulk generate (+ Tool.is_active check),
-│   │                               job/batch status
+│   │   ├── generation_controller.py  single + bulk generate (+ Tool.is_active + credit
+│   │                               checks, incl. the held-credits race fix), job/batch status
+│   │   ├── billing_controller.py   🟢 subscribe/cancel/topup, webhook processing, free-plan assignment
 │   │   └── product_import_controller.py
 │   │
 │   └── routes/                     ── thin URL → controller wiring ──
 │       ├── health_routes.py  auth_routes.py  team_routes.py
 │       ├── asset_routes.py   generation_routes.py  product_import_routes.py
-│       └── admin_routes.py          🟢 POST /admin/cache/clear (dev-only), GET /tools
+│       ├── admin_routes.py          🟢 POST /admin/cache/clear (dev-only), GET /tools
+│       └── billing_routes.py        🟢 GET /plans, /billing/credit-packs, subscribe/cancel/topup/webhook/teams
 │
 ├── scripts/test_pipeline.py        End-to-end proof against a LIVE server
-├── test-console/index.html         Hand-driven UI — 6 sections now (tools + cache added)
+├── test-console/index.html         Hand-driven UI — 7 sections (tools, cache, billing added)
 ├── docs/
 │   ├── BOOK.md                     ← you are here
 │   ├── superpowers/plans/2026-08-17-generation-pipeline.md
-│   └── superpowers/specs/          Design docs — Spec A built (2026-08-19), Spec B not yet
+│   └── superpowers/specs/          Design docs — both A and B built (2026-08-19)
 │       ├── 2026-08-19-personal-teams-and-tools-registry-design.md
 │       └── 2026-08-19-billing-credits-and-payments-design.md
 ├── README.md                       Setup + day-to-day usage
 ├── DESIGN.md                       Architecture reference + decision rationale
-├── .env.example                    The setup checklist
-└── requirements.txt
+├── .env.example                    The setup checklist (now incl. RAZORPAY_* )
+└── requirements.txt                (+ razorpay==2.0.1)
 ```
 
 **Legend:** 🔌 = a swappable seam
@@ -2650,21 +2889,22 @@ shootpx-backend/
 | `GET` | `/product-imports/{id}` | ✅ member | Poll; once done includes metadata + every image as a real asset |
 | `GET` | `/tools` | — | 🟢 Every active tool — `feature_type`, `display_name`, `credit_cost` |
 | `POST` | `/admin/cache/clear` | — | 🟢 Dev-only (`ENV=development`), 404 otherwise |
+| `GET` | `/plans` | — | 🟢 Every active plan (discovery route) |
+| `GET` | `/billing/credit-packs` | — | 🟢 Every active top-up pack |
+| `POST` | `/billing/subscribe` | ✅ **owner** | 🟢 New subscription, or a plan change if one's already active |
+| `POST` | `/billing/cancel` | ✅ **owner** | 🟢 Effective at `current_period_end`, never instant |
+| `POST` | `/billing/topup` | ✅ member | 🟢 One-off credit purchase |
+| `POST` | `/billing/webhook/{provider}` | — (signature-verified) | 🟢 No session cookie — the provider calls this directly. Idempotent |
+| `GET` | `/billing/teams/{id}` | ✅ member | 🟢 Plan, balance, subscription status, recent ledger entries |
 
 ### 🔵 Planned routes — not built yet
 
 Everything below is designed, not live. Calling any of these today 404s.
-Spec-backed rows link to their spec; everything else is a catalogued gap with
-no spec written ([Part VI](#part-vi--what-comes-next) has the full reasoning).
+This is now every remaining catalogued gap — nothing left with a written
+spec behind it ([Part VI](#part-vi--what-comes-next) has the full reasoning).
 
-| Method | Path | Spec |
+| Method | Path | Notes |
 |---|---|---|
-| `GET` | `/plans` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
-| `GET` | `/billing/credit-packs` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
-| `POST` | `/billing/subscribe` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
-| `POST` | `/billing/topup` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
-| `POST` | `/billing/webhook/{provider}` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
-| `GET` | `/billing/teams/{id}` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
 | — | API keys (server-to-server auth) | not yet spec'd |
 | — | Job-completion webhooks | not yet spec'd |
 | — | Asset list / delete | not yet spec'd |
@@ -2793,11 +3033,12 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 
 **End of the ShootPX Backend Book.**
 
-*Last chapter: [Chapter 16](#chapter-16--testing-and-the-test-console) ·
-Last commit covered: 2026-08-19, `0b7389b` (working-tree changes since then are
-Spec A's implementation, described in Era 5 — not yet committed) ·
-Last timeline entry: Era 5, 2026-08-19 — Spec A built and verified live (16/16
-checks); Spec B still needs real Razorpay credentials to go further.*
+*Last chapter: [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) ·
+Last timeline entry: Era 6, 2026-08-19 — both specs built and verified live
+against real infrastructure (Postgres, Redis, Firebase, and a real Razorpay
+test-mode account), 45 total verification checks across three scripts, zero
+mocked. Every gap identified this session either has a spec, is built, or is
+explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 

@@ -19,11 +19,17 @@ from app.core.db import Base, engine  # noqa: E402
 # before autogenerate diffs against it — same imports app/main.py and
 # app/worker.py both need for the same reason (SQLAlchemy needs every
 # mapped class imported before mapper configuration runs).
+from app.models import ai_model as ai_model_models  # noqa: E402,F401
 from app.models import asset as asset_models  # noqa: E402,F401
+from app.models import credit as credit_models  # noqa: E402,F401
 from app.models import generation_job as generation_job_models  # noqa: E402,F401
 from app.models import invite as invite_models  # noqa: E402,F401
+from app.models import payment as payment_models  # noqa: E402,F401
+from app.models import plan as plan_models  # noqa: E402,F401
 from app.models import product_import as product_import_models  # noqa: E402,F401
+from app.models import subscription as subscription_models  # noqa: E402,F401
 from app.models import team as team_models  # noqa: E402,F401
+from app.models import template as template_models  # noqa: E402,F401
 from app.models import tool as tool_models  # noqa: E402,F401
 from app.models import user as user_models  # noqa: E402,F401
 

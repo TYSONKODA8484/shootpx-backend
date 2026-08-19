@@ -13,6 +13,7 @@
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .warn { color: #a00; font-weight: 600; }
 </style>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body>
 
@@ -126,6 +127,27 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
 </section>
 
 <section>
+  <h2>7. Billing (Razorpay)</h2>
+  <div class="row">
+    <input id="billing-team-id-input" placeholder="team_id (auto-filled after sign-in)" size="36" />
+    <button id="get-billing-status-btn">GET /billing/teams/:id</button>
+  </div>
+  <div class="row">
+    <button id="list-plans-btn">GET /plans</button>
+    <button id="list-credit-packs-btn">GET /billing/credit-packs</button>
+  </div>
+  <div class="row">
+    <input id="plan-id-input" placeholder="plan_id (paste from GET /plans)" size="36" />
+    <button id="subscribe-btn">Subscribe (opens real Razorpay checkout)</button>
+    <button id="cancel-sub-btn">Cancel subscription</button>
+  </div>
+  <div class="row">
+    <input id="credit-pack-id-input" placeholder="credit_pack_id (paste from GET /billing/credit-packs)" size="36" />
+    <button id="topup-btn">Top up (opens real Razorpay checkout)</button>
+  </div>
+</section>
+
+<section>
   <h2>Log</h2>
   <pre id="log">(responses show up here)</pre>
 </section>
@@ -177,7 +199,7 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
     const teams = await res.json();
     if (!teams.length) return;
     const teamId = teams[0].id;
-    ["team-id-input", "asset-team-id-input", "generate-team-id-input", "bulk-team-id-input"]
+    ["team-id-input", "asset-team-id-input", "generate-team-id-input", "bulk-team-id-input", "billing-team-id-input"]
       .forEach((id) => { document.getElementById(id).value = teamId; });
   }
 
@@ -361,6 +383,76 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
   document.getElementById("clear-login-cache-btn").onclick = () => clearCache("login");
   document.getElementById("clear-media-cache-btn").onclick = () => clearCache("media");
   document.getElementById("clear-all-cache-btn").onclick = () => clearCache("all");
+
+  document.getElementById("get-billing-status-btn").onclick = async () => {
+    const teamId = document.getElementById("billing-team-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/billing/teams/${teamId}`, { credentials: "include" });
+    log("GET /billing/teams/:id", await res.json());
+  };
+
+  document.getElementById("list-plans-btn").onclick = async () => {
+    const res = await fetch(`${BACKEND_URL}/plans`, { credentials: "include" });
+    log("GET /plans", await res.json());
+  };
+
+  document.getElementById("list-credit-packs-btn").onclick = async () => {
+    const res = await fetch(`${BACKEND_URL}/billing/credit-packs`, { credentials: "include" });
+    log("GET /billing/credit-packs", await res.json());
+  };
+
+  // Opens Razorpay's real hosted checkout modal (test mode) — same "a JS
+  // SDK glue for whatever needs a real browser popup" pattern this console
+  // already uses for Firebase login.
+  function openRazorpayCheckout(checkout, description) {
+    const rzp = new Razorpay({
+      key: checkout.key_id,
+      subscription_id: checkout.subscription_id,  // present for subscribe
+      order_id: checkout.order_id,                // present for top-up
+      amount: checkout.amount,
+      currency: checkout.currency,
+      name: "ShootPX (test mode)",
+      description,
+      handler: (response) => log("Razorpay checkout completed", response),
+      modal: { ondismiss: () => log("Razorpay checkout", { message: "closed without paying" }) },
+    });
+    rzp.open();
+  }
+
+  document.getElementById("subscribe-btn").onclick = async () => {
+    const team_id = document.getElementById("billing-team-id-input").value;
+    const plan_id = document.getElementById("plan-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/billing/subscribe`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id, plan_id }),
+    });
+    const data = await res.json();
+    log("POST /billing/subscribe", data);
+    if (data.checkout) openRazorpayCheckout(data.checkout, "Subscription");
+  };
+
+  document.getElementById("cancel-sub-btn").onclick = async () => {
+    const team_id = document.getElementById("billing-team-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/billing/cancel`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id }),
+    });
+    log("POST /billing/cancel", await res.json());
+  };
+
+  document.getElementById("topup-btn").onclick = async () => {
+    const team_id = document.getElementById("billing-team-id-input").value;
+    const credit_pack_id = document.getElementById("credit-pack-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/billing/topup`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id, credit_pack_id }),
+    });
+    const data = await res.json();
+    log("POST /billing/topup", data);
+    if (data.checkout) openRazorpayCheckout(data.checkout, "Credit top-up");
+  };
 </script>
 
 </body>

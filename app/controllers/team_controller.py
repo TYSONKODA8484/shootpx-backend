@@ -3,11 +3,14 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.controllers.billing_controller import assign_free_plan
 from app.core.config import settings
 from app.core.email import send_email
 from app.core.firebase import generate_email_sign_in_link
 from app.core.permissions import compute_permissions, get_membership
 from app.models.invite import TeamInvite
+from app.models.plan import Plan
+from app.models.subscription import TeamSubscription
 from app.models.team import Team, TeamMembership, TeamRole, new_id
 from app.models.user import User
 from app.schemas.teams import MemberAdd, TeamCreate, TeamUpdate
@@ -68,6 +71,12 @@ def create_personal_team(db: Session, user: User) -> Team:
     required field everywhere else; this just guarantees one always exists."""
     base_name = user.name or user.email.split("@")[0]
     team, _ = create_team(db, user, TeamCreate(name=f"{base_name}'s Workspace"))
+
+    # Assign the Free plan + grant its starter credits SYNCHRONOUSLY — a
+    # brand-new signup must never wait on the refill cron for its first
+    # credits. See billing_controller.assign_free_plan / BOOK.md Chapter 17.
+    assign_free_plan(db, team)
+
     return team
 
 
@@ -109,6 +118,21 @@ def add_member(db: Session, team_id: str, current_user: User, payload: MemberAdd
     membership = get_membership(db, team_id, current_user.id)
     if not compute_permissions(membership.role).can_manage_team:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the team owner can add members")
+
+    # Hard block at the plan's max_team_members — same "reject, don't
+    # silently overage" philosophy as credit enforcement
+    # (generation_controller.py). Fails open if there's no subscription row
+    # yet (shouldn't happen post Spec B, but a team predating it shouldn't
+    # be blocked from adding members over a missing billing row).
+    sub = db.query(TeamSubscription).filter(TeamSubscription.team_id == team_id).first()
+    if sub is not None:
+        plan = db.get(Plan, sub.plan_id)
+        current_member_count = db.query(TeamMembership).filter(TeamMembership.team_id == team_id).count()
+        if plan is not None and current_member_count >= plan.max_team_members:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Team member limit ({plan.max_team_members}) reached for the current plan — upgrade to add more",
+            )
 
     email = payload.email.lower()
     target = db.query(User).filter(User.email == email).first()

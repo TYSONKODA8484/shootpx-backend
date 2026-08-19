@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
 from app.models.team import new_id
@@ -46,6 +46,12 @@ class GenerationJob(Base):
     # the one that submitted; nothing about routing back to the right
     # provider can live in that process's memory.
     input_payload = Column(JSON, default=dict, nullable=False)
+    credit_cost = Column(Integer, nullable=True)  # resolved by
+    # core/pricing.py's resolve_credit_cost() ONCE, at submission (before
+    # enqueueing) — never recomputed at completion. app/worker.py deducts
+    # exactly this stored number on success, so a mid-flight pricing change
+    # can never retroactively affect a job already running, and every
+    # credit_transactions row has a permanent record of what THIS job cost.
     error = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)

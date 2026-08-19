@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
 
@@ -20,13 +20,12 @@ class Tool(Base):
     feature_type = Column(String, primary_key=True)  # code-owned
     display_name = Column(String, nullable=False)  # code-owned
     output_media_type = Column(String, nullable=False)  # code-owned
-    default_model_id = Column(String, nullable=True)  # code-owned. Set when
-    # this tool offers model selection. NULL means this tool has no model
-    # concept — dispatch falls back to credit_cost below. Deliberately NOT a
-    # ForeignKey — the ai_models table it would point at doesn't exist yet
-    # (billing/pricing-engine work); add the FK constraint in a later
-    # migration once that table exists, this column just needs to hold the
-    # right string until then.
+    default_model_id = Column(String, ForeignKey("ai_models.model_id"), nullable=True)
+    # ^ code-owned. Set when this tool offers model selection. NULL means
+    # this tool has no model concept — core/pricing.py falls back to
+    # credit_cost below. The FK constraint was deliberately deferred until
+    # ai_models existed (see BOOK.md Chapter 12 / the Spec A -> Spec B
+    # sequencing note) — added now that it does.
 
     credit_cost = Column(Integer, nullable=False, default=1)  # DB-owned
     pricing_config = Column(JSON, nullable=True)  # DB-owned. e.g.
