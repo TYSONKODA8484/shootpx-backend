@@ -231,12 +231,16 @@ retry cadence **is** the grace period.
 
 | Route | Does |
 |---|---|
+| `GET /plans` | Every active `Plan` row — a client can't build a pricing page or a "choose a plan" flow without this. Same self-review gap as Spec A's missing `GET /tools`, caught the same way: every route so far only *spends* against an id you already have, none let you *discover* one |
+| `GET /billing/credit-packs` | Every active `CreditPack` row, for the top-up picker |
 | `POST /billing/subscribe` | `{team_id, plan_id}` → `payment_provider.create_subscription(...)` → returns a checkout URL |
 | `POST /billing/topup` | `{team_id, credit_pack_id}` → `payment_provider.create_one_time_order(...)` |
 | `POST /billing/webhook/{provider}` | Signature-verified via `payment_provider.verify_webhook_signature`, **no session cookie** — the provider calls this directly. Processes charge/cancel/halt/payment-failed events |
 | `GET /billing/teams/{id}` | Current plan, balance, subscription status, recent `credit_transactions` — for the console/future frontend |
 
-Test console: new section — subscribe (redirect to the returned checkout
+Test console: new section — list plans/credit-packs (`GET /plans`,
+`GET /billing/credit-packs`, so there's something to actually pick an id
+from before subscribing), subscribe (redirect to the returned checkout
 URL), a balance/plan display (calls `GET /billing/teams/{id}`), a manual
 webhook-event simulator for local testing (since real Razorpay webhooks need
 a publicly reachable URL — documented in DESIGN.md as needing ngrok or

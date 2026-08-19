@@ -1873,6 +1873,32 @@ with poison tests. Full story in [Chapter 15](#chapter-15--caching).
 whole history readable in one place instead of living in commit messages.
 
 ---
+
+## Era 4 — Two Specs, Zero Code Yet *(2026-08-19)*
+
+A real customer requirement came in — a lingerie/apparel virtual-try-on tool
+(mapped directly onto the already-existing `on_model_shots` tool from Era 1;
+see [Part VI](#part-vi--what-comes-next)) — which forced two questions that
+had been quietly deferred since the very first commit: how does a solo user
+get a team without friction, and how does anyone actually get billed.
+
+Both were designed in full, in conversation, before any code was written —
+[Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md)
+(personal teams, tool-registry auto-discovery, a DB-backed `tools` table, a
+dev-only cache API) and
+[Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)
+(a `PaymentProvider` seam, per-team credit ledger, monthly/yearly Razorpay
+subscriptions, and a layered pricing engine built to support per-model and
+per-template pricing before either of those features exists). Both specs'
+self-review caught the same class of gap independently — every route either
+one proposed let a client *spend* against an id it already had, none let a
+client *discover* one — fixed by adding `GET /tools`, `GET /plans`, and
+`GET /billing/credit-packs` before implementation ever started.
+
+Neither spec is implemented yet. This entry exists so "why does this book
+suddenly know about Razorpay" has an answer.
+
+---
 ---
 
 # Part V — The Deprecation Ledger
@@ -1970,6 +1996,75 @@ decision or wonders why a comment mentions something that doesn't exist.
 Everything below is 🔵 **deliberately not built**, with the reasoning recorded so
 it isn't re-derived.
 
+### 🔵 Two specs already written, ready to implement
+
+As of 2026-08-19, two full designs exist under
+[`docs/superpowers/specs/`](superpowers/specs/) — reviewed, self-reviewed, not
+yet implemented. This section is their pointer; the specs themselves are the
+source of truth, not duplicated here.
+
+**[Spec A — Personal Teams & Tool Registry](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md)**
+(no dependencies, can start immediately):
+- Auto-create a personal team the moment someone signs up, so `team_id` is
+  never a blocker for a solo user — replaces the current "you must manually
+  call `POST /teams` first" behavior described in
+  [Chapter 6](#chapter-6--teams-invites-and-permissions).
+- `PATCH /teams/{id}` (rename, owner-only) and `GET /tools` (list every
+  active tool) — two routes this codebase has never had.
+- `app/tools/` auto-discovery — adding a tool stops needing an
+  `__init__.py` edit at all, extending
+  [Chapter 12](#chapter-12--the-tool-registry)'s "one file per tool" further
+  than it goes today.
+- A DB-backed `tools` table (`credit_cost`, `is_active`, `pricing_config`) —
+  code stays the source of truth for *behavior*, the DB becomes editable
+  without a redeploy for *cost and kill-switches*.
+- A dev-only cache-clear API (`POST /admin/cache/clear`, `ENV=development`
+  only) — extends [Chapter 15](#chapter-15--caching)'s manual one-liner into
+  something the test console can actually click.
+- Removes `has_team_access()` ([Deprecation Ledger #7](#part-v--the-deprecation-ledger)) —
+  the first entry in that ledger to go from ⚪ orphaned to actually deleted.
+
+**[Spec B — Billing: Payments, Credits, Dynamic Pricing](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md)**
+(depends on Spec A):
+- A `PaymentProvider` seam — Razorpay first, built the same way `Storage` and
+  `AIProvider` were ([§8](#8-the-swappable-seam-pattern)) so Stripe/PayPal
+  are a new file later, not a rewrite.
+- Per-team credit balances (confirmed decision: **per-team, not per-user** —
+  matches every other resource in this app being team-scoped) with a
+  full audit ledger (`credit_transactions`), monthly/yearly subscriptions,
+  and one-off top-ups.
+- A layered pricing engine: flat tool cost today → per-model base cost +
+  tool-specific modifiers (resolution, etc.) → optional per-template
+  override — so a future multi-model tool or template feature prices itself
+  without touching this engine again.
+- Credit cost is **resolved once, at submission, and stored on the job** —
+  never recomputed at completion — so a mid-flight pricing change can never
+  retroactively affect a job already running.
+- Monthly credit refills run off an **independent arq cron job**, not
+  provider webhooks — a yearly Razorpay subscription only fires one charge
+  event a year, which can't drive a monthly refill on its own.
+- New routes: `GET /plans`, `GET /billing/credit-packs`, `POST /billing/subscribe`,
+  `POST /billing/topup`, `POST /billing/webhook/{provider}`, `GET /billing/teams/{id}`.
+
+### 🔵 Every missing API, catalogued
+
+Beyond the two specs above, a pass through what a real product needs (and what
+platforms like Photoroom/Claid/Higgsfield already have) surfaces API gaps with
+no spec yet:
+
+| Missing API | Why it matters | Status |
+|---|---|---|
+| `GET /tools`, `GET /plans`, `GET /billing/credit-packs` | Every route added so far lets you *spend* against an id you already know — nothing lets a client *discover* one | ✅ Caught in spec self-review, now in Spec A/B above |
+| API keys for programmatic access | A real B2B customer (see the lingerie-tool example) wants to integrate directly, not click through a browser. Right now the *only* auth path is the Firebase-popup + session-cookie flow — there is no way for a server-to-server caller to authenticate at all | Not yet spec'd |
+| Webhooks for job completion | `GET /jobs` polling works, but every comparable platform also offers "tell me when it's done" instead of making the client poll forever | Not yet spec'd |
+| Asset list / delete | Upload exists; there's no way to browse or remove your own files | Not yet spec'd. ⚠️ Delete requires adding media-cache invalidation at the same time ([Ch. 15](#chapter-15--caching)) |
+| Team member removal / leave-team | You can invite; nothing lets you remove a member or leave a team you're on | Not yet spec'd |
+| Team delete | No such endpoint exists | Not yet spec'd — deliberately out of scope in Spec A too |
+| User profile update / account deletion | No `PATCH /auth/me`, no way to delete your own account (GDPR-relevant once real people's photos are involved — see the content-safety note this session raised for the lingerie tool) | Not yet spec'd |
+| Usage/analytics endpoints | No `GET /teams/{id}/usage` — nothing surfaces credits spent over time or jobs-by-status, needed for any real dashboard | Not yet spec'd |
+| Admin/ops visibility beyond cache-clear | No cross-team usage view, no real admin surface at all outside Spec A's one dev-only endpoint | Not yet spec'd |
+| Content moderation (input + output) | Real risk once a tool generates images of real people in intimate apparel from arbitrary uploads — flagged explicitly when the lingerie-tool requirement came in | Not yet spec'd — a product/legal decision as much as an engineering one |
+
 ### The big one: a real AI provider
 
 Everything exists to make this a contained change:
@@ -2000,7 +2095,7 @@ copy `_template.py`, fill in four fields, add one import line.
 | **Transient vs permanent errors** | A network blip fails a job permanently, same as a real error | Deliberately deferred until a real provider's actual failure modes are known |
 | **Invite-email-mismatch messaging** | Someone invited at one address who signs in with another is silently not joined | Needs invite context in the URL; no frontend to show it in yet |
 | **Imports share generation's job pool** | A burst of imports competes with generation | Split the cap once real traffic shows it's needed |
-| **Billing / subscriptions** | Not started | |
+| **Billing / subscriptions** | Not started in code | Fully designed — [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
 | **Real frontend** | Only the test console exists | |
 
 ### Things explicitly considered and rejected
@@ -2087,7 +2182,10 @@ shootpx-backend/
 ├── test-console/index.html         Hand-driven UI (5 sections)
 ├── docs/
 │   ├── BOOK.md                     ← you are here
-│   └── superpowers/plans/2026-08-17-generation-pipeline.md
+│   ├── superpowers/plans/2026-08-17-generation-pipeline.md
+│   └── superpowers/specs/          Written, reviewed, not-yet-built designs
+│       ├── 2026-08-19-personal-teams-and-tools-registry-design.md
+│       └── 2026-08-19-billing-credits-and-payments-design.md
 ├── README.md                       Setup + day-to-day usage
 ├── DESIGN.md                       Architecture reference + decision rationale
 ├── .env.example                    The setup checklist
@@ -2121,6 +2219,31 @@ shootpx-backend/
 | `GET` | `/batches/{batch_id}` | ✅ member | Aggregate counts + every job |
 | `POST` | `/product-imports` | ✅ + `can_upload_assets` | Enqueue a scrape. Returns immediately |
 | `GET` | `/product-imports/{id}` | ✅ member | Poll; once done includes metadata + every image as a real asset |
+
+### 🔵 Planned routes — not built yet
+
+Everything below is designed, not live. Calling any of these today 404s.
+Spec-backed rows link to their spec; everything else is a catalogued gap with
+no spec written ([Part VI](#part-vi--what-comes-next) has the full reasoning).
+
+| Method | Path | Spec |
+|---|---|---|
+| `PATCH` | `/teams/{id}` | [Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md) |
+| `GET` | `/tools` | [Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md) |
+| `POST` | `/admin/cache/clear` | [Spec A](superpowers/specs/2026-08-19-personal-teams-and-tools-registry-design.md) |
+| `GET` | `/plans` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
+| `GET` | `/billing/credit-packs` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
+| `POST` | `/billing/subscribe` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
+| `POST` | `/billing/topup` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
+| `POST` | `/billing/webhook/{provider}` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
+| `GET` | `/billing/teams/{id}` | [Spec B](superpowers/specs/2026-08-19-billing-credits-and-payments-design.md) |
+| — | API keys (server-to-server auth) | not yet spec'd |
+| — | Job-completion webhooks | not yet spec'd |
+| — | Asset list / delete | not yet spec'd |
+| — | Team member removal / leave-team / delete-team | not yet spec'd |
+| — | User profile update / account deletion | not yet spec'd |
+| — | Usage/analytics endpoints | not yet spec'd |
+| — | Content moderation (input + output) | not yet spec'd |
 
 **Status codes used deliberately:**
 - `201` for every create
@@ -2243,8 +2366,8 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 **End of the ShootPX Backend Book.**
 
 *Last chapter: [Chapter 16](#chapter-16--testing-and-the-test-console) ·
-Last timeline entry: 2026-08-19, commit `0b7389b` ·
-This book covers every commit through `0b7389b`.*
+Last commit covered: 2026-08-19, `0b7389b` ·
+Last timeline entry: Era 4, 2026-08-19 — two specs written, neither implemented yet.*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 

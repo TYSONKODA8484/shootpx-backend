@@ -250,6 +250,27 @@ order (A then B), split `default_model_id` as a plain nullable String column
 here with the FK constraint added by Spec B's migration once `ai_models`
 exists.)
 
+## Section 6b — `GET /tools` (a real gap found in spec self-review)
+
+Neither this spec nor Spec B originally included any way for a client to
+**discover** what's available — every route added so far only lets you *spend*
+against a tool/plan you already know the id of. Fixing that here:
+
+```
+GET /tools  →  every active Tool row: feature_type, display_name,
+                output_media_type, credit_cost (the flat fallback number —
+                a client showing "this costs 3 credits" needs this even
+                before Spec B's per-model pricing exists)
+```
+
+No auth required (this is public catalog data, same spirit as `/health`) —
+though revisit that if `is_active=false` tools should stay fully hidden
+rather than just rejected at generation time. Controller: one query,
+`db.query(Tool).filter(Tool.is_active == True).all()`, no new schema needed
+beyond `AssetRef`-style existing patterns. Test console gets a "List tools"
+button in a new small section, useful on its own for confirming the
+auto-discovery from Section 5 actually worked without reading server logs.
+
 ## Section 7 — Dev-only cache-clear API
 
 New `app/routes/admin_routes.py` — no separate controller file, this is as
