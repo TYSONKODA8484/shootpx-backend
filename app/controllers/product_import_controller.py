@@ -3,12 +3,28 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.credits import get_balance
 from app.core.permissions import compute_permissions, get_membership
 from app.core.queue import enqueue_product_import
 from app.models.asset import Asset
 from app.models.product_import import ProductImport, ProductImportStatus
 from app.models.user import User
 from app.schemas.product_import import ImportedImageRef, ProductImportOut, ProductImportRequest
+
+
+def _held_import_credits(db: Session, team_id: str) -> int:
+    """Same race fix as generation_controller.py's _held_credits, applied
+    here — deduction only happens on success (app/worker.py), so without
+    this, rapid-fire /product-imports calls could all pass the balance
+    check before any of the first ones finish. See BOOK.md Chapter 17."""
+    held = (
+        db.query(ProductImport)
+        .filter(ProductImport.team_id == team_id, ProductImport.status == ProductImportStatus.processing.value)
+        .with_entities(ProductImport.credit_cost)
+        .all()
+    )
+    return sum(cost for (cost,) in held if cost)
 
 
 async def start_product_import(
@@ -20,11 +36,20 @@ async def start_product_import(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to import assets on this team"
         )
 
+    cost = settings.PRODUCT_IMPORT_CREDIT_COST
+    available = get_balance(db, payload.team_id) - _held_import_credits(db, payload.team_id)
+    if available < cost:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Insufficient credits: need {cost}, have {available}",
+        )
+
     imp = ProductImport(
         team_id=payload.team_id,
         created_by=current_user.id,
         source_url=payload.url,
         status=ProductImportStatus.processing.value,
+        credit_cost=cost,
     )
     db.add(imp)
     db.commit()

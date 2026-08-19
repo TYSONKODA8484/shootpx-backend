@@ -1619,7 +1619,7 @@ couldn't see.
 
 ## Chapter 14 — Product Imports
 
-**Status: 🟢 CURRENT** · **Files:** [`core/product_scraper_client.py`](../app/core/product_scraper_client.py), [`models/product_import.py`](../app/models/product_import.py), [`controllers/product_import_controller.py`](../app/controllers/product_import_controller.py), [`app/worker.py`](../app/worker.py)
+**Status: 🟡 CHANGED** · **Files:** [`core/product_scraper_client.py`](../app/core/product_scraper_client.py), [`models/product_import.py`](../app/models/product_import.py), [`controllers/product_import_controller.py`](../app/controllers/product_import_controller.py), [`app/worker.py`](../app/worker.py)
 
 ### What it does
 
@@ -1627,6 +1627,21 @@ couldn't see.
 product's name, description, brand, price and theme colours, **plus every image
 on the page downloaded and saved as a real `Asset`** — immediately usable as
 `source_asset_id` for `/generate`, exactly like an upload.
+
+### 🟢 Costs credits, same system as generation *(new)*
+
+A flat **5 credits per pull** (`settings.PRODUCT_IMPORT_CREDIT_COST`) — a
+plain settings constant, not routed through [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing)'s
+tiered `resolve_credit_cost()`, since a product import has no
+`feature_type`/model concept to key off (deliberately, per this chapter's
+"a different external system" framing). `product_import_controller.py`
+checks the team's balance — accounting for credits already held by other
+in-flight imports, the exact same race-condition fix Chapter 17 documents
+for generation — before creating the row; `app/worker.py`'s `_poll_import`
+deducts on success, in the same commit as marking the row `done`.
+Verified for real: a fresh 5-credit team pulled a real Amazon product page,
+landed at 0 credits, a second pull was rejected with 402, buying a top-up
+brought the balance back, and pulling succeeded again.
 
 ### Three decisions, each made explicitly
 
@@ -2082,14 +2097,35 @@ other billing route lets a team *spend* against an id it already knows;
 nothing let a client see what's available until this spec's own review
 caught the gap.
 
-### What's still a placeholder
+### 🐛 A third bug: one-time top-ups never actually credited anyone
 
-The seeded `plans` table has exactly one real-money tier (a `Starter` plan,
-created for verification against a genuine Razorpay test-mode plan id) plus
-the Free plan — actual pricing/tiers are business data, not invented here.
-Proration, a real admin UI for editing plans/models/templates, and
-issuing-a-refund-ourselves are all deliberately out of scope — see the
-spec's non-goals for the reasoning behind each.
+The first draft of `process_webhook_event` handled `subscription.activated`/
+`subscription.charged` (crediting a subscription's cycle) but had **no
+branch for a standalone `payment.captured` event** — exactly what fires
+when a one-time top-up `Order` succeeds. `POST /billing/topup` created a
+completely real Razorpay order and nothing, ever, would have granted the
+credits once someone actually paid it. Found by writing the same "buy
+credits, confirm they land" verification this book insists on everywhere
+else, not by re-reading the code.
+
+Fixed by adding a `payment.captured` branch that recovers `team_id` and
+`credit_amount` from the payment entity's `notes` — the exact values
+`create_topup_order` already attaches at order-creation time, round-tripped
+back by Razorpay on the webhook, so no separate "pending order" row needs
+tracking locally. Same idempotency guard as every other branch: checked
+against `payments` before granting anything.
+
+### Real pricing is now seeded, replacing the verification placeholders
+
+- **Free plan** — unchanged, 5 starter credits (this one happened to match
+  the real business decision from the start).
+- **Credit packs (one-time, don't expire):** ₹10 → 10 credits, ₹100 → 100
+  credits, ₹1000 → 1000 credits.
+- **Subscription:** ₹100/month → 100 credits/month, resetting each cycle —
+  backed by a real Razorpay test-mode Plan, not the placeholder `Starter`
+  tier used to first verify the subscribe flow (deactivated via
+  `is_active`, not deleted — the retire-don't-delete pattern this column
+  exists for).
 
 ---
 ---
@@ -2326,6 +2362,47 @@ the cron running standalone and zero Razorpay events involved.
 Test console gained a seventh section wired to Razorpay's real Checkout.js,
 the same "a JS SDK for whatever needs a real browser popup" pattern already
 used for Firebase login.
+
+---
+
+## Era 7 — Product Imports Wired Into the Credit System, For Real *(2026-08-19)*
+
+Same day. The user pointed at a concrete, already-built feature — the
+[`product-scrapper`](https://github.com/TYSONKODA8484/product-scrapper)
+integration from [Chapter 14](#chapter-14--product-imports) — and gave real
+numbers to price it with: 5 credits per URL pull, 5 starter credits on
+signup (already what Era 6 had seeded, coincidentally), and real Razorpay
+pricing to replace the verification placeholders — ₹10/100/1000 one-time
+packs and a ₹100/month subscription.
+
+The scraper's sibling repo didn't exist locally yet — cloned fresh, its own
+venv set up, Playwright's Chromium installed, and its `service.py` (the
+submit/poll wrapper Chapter 14 already documents as existing specifically
+for this integration) run for real on port 8501, not assumed.
+
+**A third real bug**, found the same way as the first two — by actually
+running the full paid-feature flow rather than trusting the code: one-time
+top-up purchases had **no webhook handler at all**. `POST /billing/topup`
+created a completely genuine Razorpay order; nothing would ever have
+credited anyone who actually paid it. Full account in
+[Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing). Fixed
+before it was ever called "done."
+
+Verified against a real Amazon product page
+(`https://www.amazon.in/dp/B0FQFBHQMJ` — the scraper repo's own documented
+example) through the complete loop this session's numbers actually describe:
+a fresh 5-credit account pulls once, lands at 0, a second pull is rejected
+with 402, a real ₹10 Razorpay top-up order is created and its webhook
+(simulated with a correctly-signed payload, since no browser exists to
+complete a real Checkout popup from a script) credits the account, a
+redelivered copy of that same webhook does **not** double-credit, and the
+next pull succeeds. 15 checks, all passing. Two earlier test-script bugs
+(a bad test URL that correctly triggered Chapter 14's own "not a product
+page" failure path, and a Windows console encoding crash printing ₹) were
+found and fixed along the way — neither was an application bug.
+
+Test console gained an eighth section for product imports; none existed
+before this entry despite the feature having existed since Era 2.
 
 ---
 ---
@@ -2770,7 +2847,8 @@ shootpx-backend/
 │       │                            never had them until this migration; see Chapter 13)
 │       ├── 1fa978c93dc2_...py      🟢 The 8 billing tables + generation_jobs.credit_cost
 │       │                           + tools.default_model_id's FK (deferred from Spec A)
-│       └── baa7b2ede411_...py      🟢 Seeds the Free plan, backfills every existing team onto it
+│       ├── baa7b2ede411_...py      🟢 Seeds the Free plan, backfills every existing team onto it
+│       └── 53d441e69de6_...py      🟢 Adds product_imports.credit_cost (Era 7)
 │
 ├── app/
 │   ├── main.py                     Creates the app, mounts /files, registers 8 routers,
@@ -2846,7 +2924,7 @@ shootpx-backend/
 │       └── billing_routes.py        🟢 GET /plans, /billing/credit-packs, subscribe/cancel/topup/webhook/teams
 │
 ├── scripts/test_pipeline.py        End-to-end proof against a LIVE server
-├── test-console/index.html         Hand-driven UI — 7 sections (tools, cache, billing added)
+├── test-console/index.html         Hand-driven UI — 8 sections (tools, cache, product import, billing added)
 ├── docs/
 │   ├── BOOK.md                     ← you are here
 │   ├── superpowers/plans/2026-08-17-generation-pipeline.md
@@ -3034,10 +3112,13 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 **End of the ShootPX Backend Book.**
 
 *Last chapter: [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) ·
-Last timeline entry: Era 6, 2026-08-19 — both specs built and verified live
-against real infrastructure (Postgres, Redis, Firebase, and a real Razorpay
-test-mode account), 45 total verification checks across three scripts, zero
-mocked. Every gap identified this session either has a spec, is built, or is
+Last timeline entry: Era 7, 2026-08-19 — both specs built, product imports
+wired into the credit system, all four verified live against real
+infrastructure (Postgres, Redis, Firebase, a real Razorpay test-mode
+account, and a real running product-scrapper instance), 60 total
+verification checks across four scripts, zero mocked, three real bugs found
+and fixed by actually running the paid flows rather than trusting the code.
+Every gap identified this session either has a spec, is built, or is
 explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**

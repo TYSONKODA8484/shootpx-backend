@@ -237,6 +237,35 @@ def process_webhook_event(db: Session, provider: str, event: str, payload: dict)
             _downgrade_to_free(db, sub.team_id)
         return {"status": "processed"}
 
+    if event == "payment.captured":
+        # A ONE-TIME order (top-up) succeeding — subscription charges are
+        # handled entirely by the subscription.activated/charged branch
+        # above, never here. Identified by `notes.credit_pack_id`, which
+        # create_topup_order always sets on the order/payment at creation
+        # time — Razorpay round-trips notes back on the payment entity, so
+        # no local "pending order" row is needed to recover team_id/amount.
+        payment_entity = entity.get("payment", {}).get("entity", {})
+        notes = payment_entity.get("notes") or {}
+        if "credit_pack_id" not in notes:
+            return {"status": "ignored", "reason": "not a top-up payment"}
+
+        provider_payment_id = payment_entity.get("id")
+        if provider_payment_id and db.query(Payment).filter(Payment.provider_payment_id == provider_payment_id).first():
+            return {"status": "already_processed"}
+
+        team_id = notes.get("team_id")
+        credit_amount = int(notes.get("credit_amount", 0))
+
+        db.add(Payment(
+            team_id=team_id, provider=provider, provider_payment_id=provider_payment_id,
+            provider_order_id=payment_entity.get("order_id"),
+            amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
+            status=PaymentStatus.captured.value, kind=PaymentKind.topup.value,
+        ))
+        apply_credit_delta(db, team_id, credit_amount, reason=CreditReason.topup_purchase.value, reference_id=provider_payment_id)
+        db.commit()
+        return {"status": "processed"}
+
     if event == "payment.failed":
         return {"status": "acknowledged"}  # subscription.halted (Razorpay's
         # own dunning conclusion) is what actually triggers the downgrade;

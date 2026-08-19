@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
 from app.models.team import new_id
@@ -52,6 +52,10 @@ class ProductImport(Base):
     # ExtractionResult, verbatim, once done — nothing is lost even though
     # only some fields are promoted to their own columns above.
 
+    credit_cost = Column(Integer, nullable=True)  # resolved and locked in at
+    # submission time (settings.PRODUCT_IMPORT_CREDIT_COST), same "never
+    # recomputed at completion" principle as GenerationJob.credit_cost —
+    # see BOOK.md Chapter 17.
     error = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)

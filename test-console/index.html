@@ -127,7 +127,22 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
 </section>
 
 <section>
-  <h2>7. Billing (Razorpay)</h2>
+  <h2>7. Product Import (URL pull)</h2>
+  <p style="color:#666;font-size:13px;margin:0 0 8px;">Costs 5 credits per pull — needs the product-scrapper service
+  running separately on port 8501.</p>
+  <div class="row">
+    <input id="import-team-id-input" placeholder="team_id (auto-filled after sign-in)" size="36" />
+    <input id="import-url-input" placeholder="https://www.amazon.in/dp/..." size="50" />
+    <button id="start-import-btn">Pull product info</button>
+  </div>
+  <div class="row">
+    <input id="import-id-input" placeholder="import_id (auto-filled)" size="36" />
+    <button id="get-import-btn">GET /product-imports/:id</button>
+  </div>
+</section>
+
+<section>
+  <h2>8. Billing (Razorpay)</h2>
   <div class="row">
     <input id="billing-team-id-input" placeholder="team_id (auto-filled after sign-in)" size="36" />
     <button id="get-billing-status-btn">GET /billing/teams/:id</button>
@@ -199,7 +214,7 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
     const teams = await res.json();
     if (!teams.length) return;
     const teamId = teams[0].id;
-    ["team-id-input", "asset-team-id-input", "generate-team-id-input", "bulk-team-id-input", "billing-team-id-input"]
+    ["team-id-input", "asset-team-id-input", "generate-team-id-input", "bulk-team-id-input", "billing-team-id-input", "import-team-id-input"]
       .forEach((id) => { document.getElementById(id).value = teamId; });
   }
 
@@ -383,6 +398,25 @@ First-time setup: <code>cp firebase-config.example.js firebase-config.js</code> 
   document.getElementById("clear-login-cache-btn").onclick = () => clearCache("login");
   document.getElementById("clear-media-cache-btn").onclick = () => clearCache("media");
   document.getElementById("clear-all-cache-btn").onclick = () => clearCache("all");
+
+  document.getElementById("start-import-btn").onclick = async () => {
+    const team_id = document.getElementById("import-team-id-input").value;
+    const url = document.getElementById("import-url-input").value;
+    const res = await fetch(`${BACKEND_URL}/product-imports`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id, url }),
+    });
+    const data = await res.json();
+    log("POST /product-imports", data);
+    if (data.id) document.getElementById("import-id-input").value = data.id;
+  };
+
+  document.getElementById("get-import-btn").onclick = async () => {
+    const importId = document.getElementById("import-id-input").value;
+    const res = await fetch(`${BACKEND_URL}/product-imports/${importId}`, { credentials: "include" });
+    log("GET /product-imports/:id", await res.json());
+  };
 
   document.getElementById("get-billing-status-btn").onclick = async () => {
     const teamId = document.getElementById("billing-team-id-input").value;

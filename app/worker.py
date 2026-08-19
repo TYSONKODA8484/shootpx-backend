@@ -387,6 +387,13 @@ def _poll_import(db: Session, imp: ProductImport) -> bool:
 
     imp.status = ProductImportStatus.done.value
     imp.completed_at = datetime.utcnow()
+
+    # Same "deduct in the same commit as marking done" principle as
+    # run_generation_job's _poll — a crash between the two can never charge
+    # without completing, or complete without charging.
+    if imp.credit_cost:
+        apply_credit_delta(db, imp.team_id, -imp.credit_cost, reason=CreditReason.generation_spend.value, reference_id=imp.id)
+
     db.commit()
     return False
 
