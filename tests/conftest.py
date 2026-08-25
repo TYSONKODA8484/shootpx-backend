@@ -50,6 +50,7 @@ def client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    settings.CMS_ADMIN_PASSWORD = "test-password"
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

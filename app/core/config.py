@@ -120,5 +120,13 @@ class Settings(BaseSettings):
     # never waits on this (see create_personal_team / the subscribe flow).
     CREDIT_REFILL_CRON_HOUR: int = 3  # 03:00 server time, low-traffic default
 
+    # CMS (internal admin control panel, cms/ folder) — one shared password,
+    # not a per-user role: there's no admin-role concept in this app.
+    # CMS_ADMIN_PASSWORD empty means POST /cms/login always 401s — fails
+    # closed rather than open if someone forgets to set it.
+    CMS_ADMIN_PASSWORD: str = ""
+    CMS_URL: str = "http://localhost:3001"
+    CMS_SESSION_MAX_AGE_SECONDS: int = 60 * 60 * 24 * 7  # 7 days
+
 
 settings = Settings()
