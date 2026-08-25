@@ -11,7 +11,7 @@ from app.core.config import settings
 def register_middleware(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.FRONTEND_URL, settings.TEST_CONSOLE_URL],
+        allow_origins=[settings.FRONTEND_URL, settings.TEST_CONSOLE_URL, settings.CMS_URL],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

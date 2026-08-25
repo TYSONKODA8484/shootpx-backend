@@ -21,3 +21,21 @@ def read_session_token(token: str) -> str | None:
     except (BadSignature, SignatureExpired):
         return None
     return data.get("user_id")
+
+
+# The CMS's own signed token — same itsdangerous mechanism as the user
+# session token above, deliberately a different salt so one token type can
+# never be mistaken for (or forged from) the other.
+_cms_serializer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="cms_session")
+
+
+def create_cms_token() -> str:
+    return _cms_serializer.dumps({"cms_admin": True})
+
+
+def read_cms_token(token: str) -> bool:
+    try:
+        data = _cms_serializer.loads(token, max_age=settings.CMS_SESSION_MAX_AGE_SECONDS)
+    except (BadSignature, SignatureExpired):
+        return False
+    return bool(data.get("cms_admin"))
