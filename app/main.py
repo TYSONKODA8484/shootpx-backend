@@ -35,6 +35,7 @@ from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
 from app.routes.product_import_routes import router as product_import_router
 from app.routes.team_routes import router as teams_router
+from app.routes.template_routes import router as template_router
 from app.tools.sync import sync_tools_to_db
 
 init_firebase()
@@ -53,6 +54,7 @@ app.include_router(asset_router)
 app.include_router(activity_router)
 app.include_router(generation_router)
 app.include_router(product_import_router)
+app.include_router(template_router)
 app.include_router(admin_router)
 app.include_router(billing_router)
 app.include_router(cms_router)
