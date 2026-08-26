@@ -25,6 +25,7 @@ from app.models import brand_kit as brand_kit_models  # noqa: E402,F401
 from app.models import credit as credit_models  # noqa: E402,F401
 from app.models import generation_job as generation_job_models  # noqa: E402,F401
 from app.models import invite as invite_models  # noqa: E402,F401
+from app.models import nav_item as nav_item_models  # noqa: E402,F401
 from app.models import payment as payment_models  # noqa: E402,F401
 from app.models import plan as plan_models  # noqa: E402,F401
 from app.models import product_import as product_import_models  # noqa: E402,F401

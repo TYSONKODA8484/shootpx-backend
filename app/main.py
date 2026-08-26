@@ -12,6 +12,7 @@ from app.models import brand_kit as brand_kit_models  # noqa: F401  (registers B
 from app.models import credit as credit_models  # noqa: F401  (registers TeamCreditBalance/CreditTransaction/CreditPack on Base)
 from app.models import generation_job as generation_job_models  # noqa: F401  (registers GenerationJob on Base)
 from app.models import invite as invite_models  # noqa: F401  (registers TeamInvite on Base)
+from app.models import nav_item as nav_item_models  # noqa: F401  (registers NavItem on Base)
 from app.models import payment as payment_models  # noqa: F401  (registers Payment on Base)
 from app.models import plan as plan_models  # noqa: F401  (registers Plan on Base)
 from app.models import product_import as product_import_models  # noqa: F401  (registers ProductImport on Base)
