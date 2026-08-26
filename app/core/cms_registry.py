@@ -336,8 +336,12 @@ register(EntityConfig(
     name="templates",
     label="Templates",
     model=Template,
+    search_fields=["name", "category"],
     fields=[
         _ID,
+        FieldConfig("name", "string"),
+        FieldConfig("category", "string"),
+        FieldConfig("preview_asset_url", "string"),
         FieldConfig("feature_type", "fk", fk_entity="tools"),
         FieldConfig("model_id", "fk", fk_entity="ai-models"),
         FieldConfig("preset_payload", "json"),
