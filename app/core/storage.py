@@ -21,6 +21,9 @@ class Storage(ABC):
     @abstractmethod
     def delete(self, key: str) -> None: ...
 
+    @abstractmethod
+    def read(self, key: str) -> bytes: ...
+
 
 class LocalStorage(Storage):
     """Writes to a folder on disk; main.py mounts that folder at /files so
@@ -45,6 +48,9 @@ class LocalStorage(Storage):
             path.unlink()
         except FileNotFoundError:
             pass  # already gone — deleting a missing file isn't an error here
+
+    def read(self, key: str) -> bytes:
+        return (self.root_dir / key).read_bytes()
 
 
 # The one line every caller goes through. Swap this for an R2/S3-backed
