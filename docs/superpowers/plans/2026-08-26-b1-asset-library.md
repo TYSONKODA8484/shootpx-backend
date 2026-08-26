@@ -1,6 +1,6 @@
 # B1 — Asset Library Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** `GET /teams/{team_id}/assets` (list, with `kind`/`media_type` filters + pagination) and `DELETE /assets/{asset_id}` (real delete: file + cache + DB row) — the first real delete flow in this app, and what the Library page needs to show/remove anything.
 
@@ -16,7 +16,7 @@
 - Modify: `app/core/storage.py`
 - Test: `tests/test_storage.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """tests/test_storage.py — LocalStorage.delete() behavior."""
@@ -42,12 +42,12 @@ def test_delete_is_a_noop_for_a_missing_file(tmp_path):
     storage.delete("team-1/does-not-exist.png")  # must not raise
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_storage.py -v`
 Expected: FAIL — `AttributeError: 'LocalStorage' object has no attribute 'delete'`
 
-- [ ] **Step 3: Implement `delete()`**
+- [x] **Step 3: Implement `delete()`**
 
 In `app/core/storage.py`, add to the `Storage` ABC (right after `url_for`):
 
@@ -67,12 +67,12 @@ And to `LocalStorage` (right after its `url_for`):
             pass  # already gone — deleting a missing file isn't an error here
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_storage.py -v`
 Expected: PASS (2 passed)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/core/storage.py tests/test_storage.py
@@ -88,7 +88,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `app/schemas/assets.py`
 
-- [ ] **Step 1: Add the schema**
+- [x] **Step 1: Add the schema**
 
 Append to `app/schemas/assets.py`:
 
@@ -98,7 +98,7 @@ class AssetListOut(BaseModel):
     assets: list[AssetOut]
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add app/schemas/assets.py
@@ -115,7 +115,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Modify: `app/controllers/asset_controller.py`
 - Test: `tests/test_asset_library.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """tests/test_asset_library.py — list_assets/delete_asset controller logic.
@@ -225,12 +225,12 @@ def test_delete_asset_404s_for_a_non_member(db_session, monkeypatch):
     assert exc_info.value.status_code == 404
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_asset_library.py -v`
 Expected: FAIL — `AttributeError: module 'app.controllers.asset_controller' has no attribute 'list_assets'` (and `delete_asset`)
 
-- [ ] **Step 3: Implement both functions**
+- [x] **Step 3: Implement both functions**
 
 In `app/controllers/asset_controller.py`, change the imports at the top from:
 
@@ -312,17 +312,17 @@ def delete_asset(db: Session, asset_id: str, current_user: User) -> None:
     # 404'd image URL. See BACKEND-NEEDS.md's B1 section for the reasoning.
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_asset_library.py -v`
 Expected: PASS (6 passed)
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing (29 passed)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/controllers/asset_controller.py tests/test_asset_library.py
@@ -338,7 +338,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `app/routes/asset_routes.py`
 
-- [ ] **Step 1: Replace the file's contents**
+- [x] **Step 1: Replace the file's contents**
 
 ```python
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
@@ -385,12 +385,12 @@ def delete_asset(
     asset_controller.delete_asset(db, asset_id, current_user)
 ```
 
-- [ ] **Step 2: Run the full suite**
+- [x] **Step 2: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add app/routes/asset_routes.py
@@ -405,11 +405,11 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Start the API**
+- [x] **Step 1: Start the API**
 
 Run: `./venv/Scripts/python.exe -m uvicorn app.main:app --port 8123`
 
-- [ ] **Step 2: Exercise the flow via `/docs`**
+- [x] **Step 2: Exercise the flow via `/docs`**
 
 Open `http://localhost:8123/docs`. Using an already-authenticated session
 (see README's test-console instructions) or an existing team/asset from
@@ -420,7 +420,7 @@ manual testing:
    `GET /teams/{team_id}/assets` again — confirm it's gone from the list
    and the file is gone from `storage/{team_id}/`.
 
-- [ ] **Step 3: Stop the server**
+- [x] **Step 3: Stop the server**
 
 Ctrl+C.
 
