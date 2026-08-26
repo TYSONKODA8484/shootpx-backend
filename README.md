@@ -180,6 +180,7 @@ are served from `localhost`.
 | `POST /product-imports` | scrape a product URL: `team_id`, `url` — enqueued, returns immediately |
 | `GET /product-imports/{id}` | poll status; once done, includes name/description/brand/price/theme colors + every scraped image as a real asset |
 | `GET /tools` | every active tool — 12 registered today, see `docs/BOOK.md` Chapter 18 |
+| `GET /nav-items` | every active Studio sidebar page — `key`, `label`; CMS-toggleable, same mechanism as `GET /tools` |
 
 Full request/response shapes are in `/docs`, not duplicated here — this
 table is just so you know what exists before opening it.
