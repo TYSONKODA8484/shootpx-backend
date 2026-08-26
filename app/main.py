@@ -36,6 +36,7 @@ from app.routes.brand_kit_routes import router as brand_kit_router
 from app.routes.cms_routes import router as cms_router
 from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
+from app.routes.nav_item_routes import router as nav_item_router
 from app.routes.product_import_routes import router as product_import_router
 from app.routes.team_routes import router as teams_router
 from app.routes.template_routes import router as template_router
@@ -51,6 +52,7 @@ register_middleware(app)
 app.mount("/files", StaticFiles(directory=settings.STORAGE_ROOT_DIR), name="files")
 
 app.include_router(health_router)
+app.include_router(nav_item_router)
 app.include_router(auth_router)
 app.include_router(teams_router)
 app.include_router(asset_router)
