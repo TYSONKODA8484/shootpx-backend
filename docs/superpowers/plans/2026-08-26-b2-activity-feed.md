@@ -1,6 +1,6 @@
 # B2 — Activity Feed Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** `GET /teams/{team_id}/activity` — one chronological per-team feed merging `generation_jobs` (done/failed), `product_imports` (done/failed), and curated `credit_transactions` (plan grants/top-ups/cancellations, not every generation spend).
 
@@ -15,7 +15,7 @@
 **Files:**
 - Create: `app/schemas/activity.py`
 
-- [ ] **Step 1: Create the schema file**
+- [x] **Step 1: Create the schema file**
 
 ```python
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ class ActivityFeedOut(BaseModel):
     next_cursor: str | None
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add app/schemas/activity.py
@@ -54,7 +54,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Create: `app/controllers/activity_controller.py`
 - Test: `tests/test_activity_feed.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """tests/test_activity_feed.py — GET /teams/{team_id}/activity's merge
@@ -183,12 +183,12 @@ def test_feed_pagination_cursor_walks_backwards(db_session):
     assert page2.events[0].created_at < page1.events[0].created_at
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_activity_feed.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.controllers.activity_controller'`
 
-- [ ] **Step 3: Implement `app/controllers/activity_controller.py`**
+- [x] **Step 3: Implement `app/controllers/activity_controller.py`**
 
 ```python
 """Computed activity feed — Option 1 from the B2 design spec. No new table:
@@ -315,17 +315,17 @@ def get_activity_feed(
     return ActivityFeedOut(events=page, next_cursor=next_cursor)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_activity_feed.py -v`
 Expected: PASS (7 passed)
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/controllers/activity_controller.py tests/test_activity_feed.py
@@ -342,7 +342,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Create: `app/routes/activity_routes.py`
 - Modify: `app/main.py`
 
-- [ ] **Step 1: Create the route**
+- [x] **Step 1: Create the route**
 
 ```python
 from fastapi import APIRouter, Depends, Query
@@ -368,7 +368,7 @@ def get_activity_feed(
     return activity_controller.get_activity_feed(db, team_id, current_user, limit=limit, before=before)
 ```
 
-- [ ] **Step 2: Wire the router into `app/main.py`**
+- [x] **Step 2: Wire the router into `app/main.py`**
 
 Add the import alongside the other route imports:
 
@@ -382,12 +382,12 @@ Add the include alongside the other `app.include_router(...)` calls (right after
 app.include_router(activity_router)
 ```
 
-- [ ] **Step 3: Run the full suite**
+- [x] **Step 3: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add app/routes/activity_routes.py app/main.py
@@ -402,16 +402,16 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Start the API**
+- [x] **Step 1: Start the API**
 
 Run: `./venv/Scripts/python.exe -m uvicorn app.main:app --port 8123`
 
-- [ ] **Step 2: Confirm the route exists**
+- [x] **Step 2: Confirm the route exists**
 
 Run: `curl.exe -s http://localhost:8123/openapi.json | ./venv/Scripts/python.exe -c "import json,sys; print(sorted(json.load(sys.stdin)['paths'].get('/teams/{team_id}/activity', {}).keys()))"`
 Expected: `['get']`
 
-- [ ] **Step 3: Stop the server**
+- [x] **Step 3: Stop the server**
 
 Ctrl+C.
 
