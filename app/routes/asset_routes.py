@@ -5,7 +5,7 @@ from app.controllers import asset_controller
 from app.core.db import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.assets import AssetListOut, AssetOut, AssetUpdate
+from app.schemas.assets import AssetListOut, AssetOut, AssetUpdate, AssetVersionsOut
 from app.schemas.exports import ExportRequest, ExportResponse
 
 router = APIRouter(tags=["assets"])
@@ -63,3 +63,12 @@ def export_asset(
     current_user: User = Depends(get_current_user),
 ):
     return asset_controller.export_asset(db, asset_id, current_user, payload.presets)
+
+
+@router.get("/assets/{asset_id}/versions", response_model=AssetVersionsOut)
+def get_asset_versions(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return asset_controller.get_asset_versions(db, asset_id, current_user)
