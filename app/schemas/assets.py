@@ -24,3 +24,14 @@ class AssetListOut(BaseModel):
 
 class AssetUpdate(BaseModel):
     is_saved_product: bool
+
+
+class AssetVersionEntry(BaseModel):
+    asset_id: str
+    url: str
+    label: str
+    created_at: str  # isoformat
+
+
+class AssetVersionsOut(BaseModel):
+    versions: list[AssetVersionEntry]  # ordered newest-first
