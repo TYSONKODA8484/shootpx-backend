@@ -19,3 +19,10 @@ def test_delete_removes_the_file(tmp_path):
 def test_delete_is_a_noop_for_a_missing_file(tmp_path):
     storage = LocalStorage(root_dir=str(tmp_path), base_url="http://x/files")
     storage.delete("team-1/does-not-exist.png")  # must not raise
+
+
+def test_read_returns_saved_bytes(tmp_path):
+    storage = LocalStorage(root_dir=str(tmp_path), base_url="http://x/files")
+    storage.save("team-1/thing.png", b"hello world")
+
+    assert storage.read("team-1/thing.png") == b"hello world"
