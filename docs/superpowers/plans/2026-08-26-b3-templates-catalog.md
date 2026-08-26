@@ -1,6 +1,6 @@
 # B3 — Templates Catalog Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** `GET /templates` — a public catalog of real, seeded template rows (24, across Photoshoot/Mockup/On-model/Motion/UGC) that the Templates page and Home's template strip can list and apply.
 
@@ -62,7 +62,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Create: `app/schemas/templates.py`
 
-- [ ] **Step 1: Create the schema file**
+- [x] **Step 1: Create the schema file**
 
 ```python
 from typing import Any
@@ -88,7 +88,7 @@ class TemplateListOut(BaseModel):
     templates: list[TemplateOut]
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add app/schemas/templates.py
@@ -105,7 +105,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Create: `app/controllers/template_controller.py`
 - Test: `tests/test_templates_catalog.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """tests/test_templates_catalog.py — GET /templates' filter/search/cost
@@ -195,12 +195,12 @@ def test_list_templates_excludes_inactive(db_session):
     assert result.total == 0
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_templates_catalog.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.controllers.template_controller'`
 
-- [ ] **Step 3: Implement `app/controllers/template_controller.py`**
+- [x] **Step 3: Implement `app/controllers/template_controller.py`**
 
 ```python
 """Public template catalog — no auth, same spirit as GET /tools. A template
@@ -258,17 +258,17 @@ def list_templates(
     return TemplateListOut(total=total, templates=templates)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_templates_catalog.py -v`
 Expected: PASS (6 passed)
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/controllers/template_controller.py tests/test_templates_catalog.py
@@ -285,7 +285,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Create: `app/routes/template_routes.py`
 - Modify: `app/main.py`
 
-- [ ] **Step 1: Create the route**
+- [x] **Step 1: Create the route**
 
 ```python
 from fastapi import APIRouter, Depends, Query
@@ -309,7 +309,7 @@ def list_templates(
     return template_controller.list_templates(db, category=category, q=q, limit=limit, offset=offset)
 ```
 
-- [ ] **Step 2: Wire into `app/main.py`**
+- [x] **Step 2: Wire into `app/main.py`**
 
 Add the import alongside the other route imports:
 
@@ -323,12 +323,12 @@ Add the include (right after `app.include_router(product_import_router)`):
 app.include_router(template_router)
 ```
 
-- [ ] **Step 3: Run the full suite**
+- [x] **Step 3: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add app/routes/template_routes.py app/main.py
@@ -344,11 +344,11 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Create: `alembic/versions/<new-revision-id>_seed_templates_catalog.py`
 
-- [ ] **Step 1: Generate a revision file**
+- [x] **Step 1: Generate a revision file**
 
 Run: `./venv/Scripts/python.exe -m alembic revision -m "seed templates catalog"`
 
-- [ ] **Step 2: Replace the generated file's contents**
+- [x] **Step 2: Replace the generated file's contents**
 
 (keep the auto-generated `revision`/`down_revision`/`Create Date` values)
 
@@ -440,18 +440,18 @@ the dict through that bind, or use SQLAlchemy Core's `table()`/`insert()`
 construct instead of raw `text()` for this one column. Report back if this
 adjustment is needed — don't silently paper over an insert that fails.
 
-- [ ] **Step 3: Apply the migration**
+- [x] **Step 3: Apply the migration**
 
 Run: `./venv/Scripts/python.exe -m alembic upgrade head`
 Expected: prints the upgrade line with no errors. If it errors on the
 `preset_payload` bind, fix per the note above, then re-run.
 
-- [ ] **Step 4: Verify the seeded rows**
+- [x] **Step 4: Verify the seeded rows**
 
 Run: `./venv/Scripts/python.exe -c "from app.core.db import SessionLocal; import sqlalchemy as sa; db = SessionLocal(); print(db.execute(sa.text('SELECT COUNT(*), COUNT(DISTINCT category) FROM templates')).first()); db.close()"`
 Expected: `(24, 5)`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add alembic/versions/
@@ -466,16 +466,16 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Start the API**
+- [x] **Step 1: Start the API**
 
 Run: `./venv/Scripts/python.exe -m uvicorn app.main:app --port 8123`
 
-- [ ] **Step 2: Confirm the catalog is real**
+- [x] **Step 2: Confirm the catalog is real**
 
 Run: `curl.exe -s "http://localhost:8123/templates?category=Motion"`
 Expected: `{"total": 6, "templates": [...]}` — 6 Motion-category templates, each with `feature_type: "product_motion"` and a real `input_payload_preset`.
 
-- [ ] **Step 3: Stop the server**
+- [x] **Step 3: Stop the server**
 
 Ctrl+C.
 
