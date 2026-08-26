@@ -2432,6 +2432,34 @@ labeled `"Original"`. Deliberately built last, per the request document's
 own reasoning: it has nothing to show until Category A's tools have real
 usage chained via `source_asset_id`.
 
+### Addendum: Nav Items — sidebar visibility (Era 12)
+
+Not part of the original 7-phase request document — added right after,
+once the user actually looked at the running CMS and asked to control the
+Studio's sidebar the same way `tools.is_active` already controls
+individual tool tiles. **Files:** [`app/models/nav_item.py`](../app/models/nav_item.py),
+`app/controllers/nav_item_controller.py`, `app/routes/nav_item_routes.py`,
+`app/schemas/nav_items.py`.
+
+`GET /nav-items` — same shape and spirit as `GET /tools`: a flat, no-auth
+array of `{ key, label, is_active }`, filtered to `is_active=true`. One new
+table, `nav_items`, seeded via a data migration with the 12 known Studio
+pages (`home`, `upload`, `photoshoot`, `refine`, `video`, `batch`, `tools`,
+`templates`, `library`, `brand`, `activity`, `prefs`) confirmed against
+actual screenshots of the running UI rather than guessed from route names.
+`allow_create=False`/`allow_delete=False` in the CMS, same reasoning as
+`tools` — an admin toggles existing rows, doesn't add or remove pages.
+
+🐛 **A real bug, caught before it shipped:** the data-seed migration's
+first version used a raw `sa.table()` Core insert supplying only
+`key`/`label`/`is_active` — but `created_at`/`updated_at` are **Python-side**
+ORM column defaults (`default=datetime.utcnow`), which a Core `insert()`
+never invokes. Running it against real Postgres failed outright with a
+`NotNullViolation` rather than silently doing the wrong thing. Confirmed
+the failed transaction rolled back cleanly (still at the prior revision,
+zero rows) before fixing it to pass both timestamps explicitly and
+re-running.
+
 ---
 ---
 
@@ -2835,6 +2863,31 @@ result back from a second, independent one. 70 automated tests now cover
 every phase (up from the 23 this session started with); `storage/`'s
 leftover manual-testing files were cleared as agreed with the user
 (no DB rows were touched — only local disk).
+
+---
+
+## Era 12 — Sidebar Visibility, From Live Feedback on the Running CMS *(2026-08-26)*
+
+Same day, after Era 11 shipped and the user actually opened the CMS for
+the first time. Two rounds of feedback: first, a question about a
+frontend "dynamic tools" idea that turned out to need **zero** backend
+work — `GET /tools` + `tools.is_active` already was the complete
+mechanism, confirmed by round-tripping the exact question to the
+frontend's own session and getting back `TOOL-VISIBILITY-ANSWERS.md`
+confirming so. Second, screenshots of the actual running Studio sidebar
+and Tools grid, asking for the same show/hide control over whole pages,
+not just individual tools. Built as `nav_items` — full writeup in
+[Chapter 18's addendum](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6).
+One more real bug (a migration's raw insert silently skipping Python-side
+ORM defaults), caught the same way as every other bug this session: by
+running it against the real database, not by reading the code twice.
+
+Also: the CMS's `is_active` checkboxes were, until this Era, unlabeled
+past their raw column name — added a `help_text` field to the CMS's own
+`FieldConfig` and set it on `tools`/`templates`/`nav_items`' `is_active`
+so the exact "unchecking this hides X from the live app instantly" effect
+is visible right where an operator clicks it, not just documented in a
+chapter they'd have to go find.
 
 ---
 ---
@@ -3269,7 +3322,7 @@ no import-list edit needed (auto-discovery, since Chapter 12 Stage 4).
 shootpx-backend/
 ├── alembic.ini                     Alembic config (its sqlalchemy.url is NOT used — see env.py)
 ├── alembic/
-│   ├── env.py                      🟢 Imports the APP's engine + all 14 models (🐛 Era 11:
+│   ├── env.py                      🟢 Imports the APP's engine + all 15 models (🐛 Era 11:
 │   │                               this list had drifted from app/main.py's — see Ch. 18, B4)
 │   └── versions/
 │       ├── e6166cbe300b_...py      Baseline — adopts the pre-existing live DB
@@ -3288,10 +3341,13 @@ shootpx-backend/
 │       ├── 7e11343179fd_...py      🟢 Adds templates.name/category/preview_asset_url
 │       ├── 8c59f976c159_...py      🟢 Seeds 24 real templates across 5 categories
 │       ├── a4f9c148aabb_...py      🟢 Adds brand_kits + brand_marks + assets.is_saved_product
-│       └── d38aaad06785_...py      🟢 Adds assets.source_asset_id (for exports)
+│       ├── d38aaad06785_...py      🟢 Adds assets.source_asset_id (for exports)
+│       ├── 47a66511d405_...py      🟢 Adds nav_items table (Era 12)
+│       └── c89302d1deb9_...py      🟢 Seeds the 12 Studio nav items (Era 12 — 🐛 fixed to
+│                                   pass created_at/updated_at explicitly, see Ch. 18 addendum)
 │
 ├── app/
-│   ├── main.py                     Creates the app, mounts /files, registers 12 routers,
+│   ├── main.py                     Creates the app, mounts /files, registers 13 routers,
 │                                   syncs the tools table at boot
 │   ├── worker.py                   🟢 THE WORKER PROCESS — lock, submit/poll, Retry,
 │                                   + the refill_due_credits cron job
@@ -3352,7 +3408,8 @@ shootpx-backend/
 │   │   ├── payment.py              🟢 payments
 │   │   ├── ai_model.py             🟢 ai_models
 │   │   ├── template.py             🟢 templates (+ name/category/preview_asset_url, Era 11)
-│   │   └── brand_kit.py            🟢 BrandKit, BrandMark (Era 11)
+│   │   ├── brand_kit.py            🟢 BrandKit, BrandMark (Era 11)
+│   │   └── nav_item.py             🟢 nav_items — sidebar show/hide (Era 12)
 │   │
 │   ├── schemas/                    ── Pydantic request/response shapes ──
 │   │   ├── auth.py  teams.py  generation.py  product_import.py
@@ -3362,7 +3419,8 @@ shootpx-backend/
 │   │   ├── activity.py              🟢 ActivityEvent, ActivityFeedOut (Era 11)
 │   │   ├── templates.py             🟢 TemplateOut, TemplateListOut (Era 11)
 │   │   ├── brand_kit.py             🟢 BrandKitOut, BrandKitUpdate, BrandMarkOut (Era 11)
-│   │   └── exports.py               🟢 ExportRequest, ExportResultItem, ExportResponse (Era 11)
+│   │   ├── exports.py               🟢 ExportRequest, ExportResultItem, ExportResponse (Era 11)
+│   │   └── nav_items.py             🟢 NavItemOut (Era 12)
 │   │
 │   ├── controllers/                ── THE ACTUAL LOGIC ──
 │   │   ├── auth_controller.py      upsert user (now returns is_new too), session cookie
@@ -3376,7 +3434,8 @@ shootpx-backend/
 │   │   ├── product_import_controller.py
 │   │   ├── activity_controller.py  🟢 computed feed over jobs/imports/curated credit txns (Era 11)
 │   │   ├── template_controller.py  🟢 public catalog list/filter/search (Era 11)
-│   │   └── brand_kit_controller.py 🟢 get-or-create kit, update, marks upload/delete (Era 11)
+│   │   ├── brand_kit_controller.py 🟢 get-or-create kit, update, marks upload/delete (Era 11)
+│   │   └── nav_item_controller.py  🟢 list active sidebar pages (Era 12)
 │   │
 │   └── routes/                     ── thin URL → controller wiring ──
 │       ├── health_routes.py  auth_routes.py  team_routes.py
@@ -3385,7 +3444,8 @@ shootpx-backend/
 │       ├── billing_routes.py        🟢 GET /plans, /billing/credit-packs, subscribe/cancel/topup/webhook/teams
 │       ├── activity_routes.py       🟢 GET /teams/{id}/activity (Era 11)
 │       ├── template_routes.py       🟢 GET /templates (Era 11)
-│       └── brand_kit_routes.py      🟢 brand-kit get/put/marks (Era 11)
+│       ├── brand_kit_routes.py      🟢 brand-kit get/put/marks (Era 11)
+│       └── nav_item_routes.py       🟢 GET /nav-items (Era 12)
 │
 ├── scripts/test_pipeline.py        End-to-end proof against a LIVE server
 ├── test-console/index.html         Hand-driven UI — 8 sections (tools, cache, product import, billing added)
@@ -3443,6 +3503,7 @@ shootpx-backend/
 | `POST` | `/product-imports` | ✅ + `can_upload_assets` | Enqueue a scrape. Returns immediately |
 | `GET` | `/product-imports/{id}` | ✅ member | Poll; once done includes metadata + every image as a real asset |
 | `GET` | `/tools` | — | 🟢 Every active tool — `feature_type`, `display_name`, `credit_cost` |
+| `GET` | `/nav-items` | — | 🟢 Every active sidebar page — `key`, `label` (Era 12) |
 | `POST` | `/admin/cache/clear` | — | 🟢 Dev-only (`ENV=development`), 404 otherwise |
 | `GET` | `/plans` | — | 🟢 Every active plan (discovery route) |
 | `GET` | `/billing/credit-packs` | — | 🟢 Every active top-up pack |
@@ -3590,22 +3651,23 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 
 **End of the ShootPX Backend Book.**
 
-*Last chapter: [Chapter 18](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6) ·
-Last timeline entry: Era 11, 2026-08-26 — a frontend-authored request
-document (`BACKEND-NEEDS.md`) turned into a design spec and seven
-implementation plans, all seven built and verified live: 10 new tool
+*Last chapter: [Chapter 18](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6)
+(including its Era-12 addendum) · Last timeline entry: Era 12, 2026-08-26
+— Era 11 shipped all seven `BACKEND-NEEDS.md` phases (10 new tool
 registrations, real asset list/delete, a computed activity feed, a seeded
-templates catalog, a full brand kit (marks/palette/type/saved-products), a
-Pillow-based export/resize pipeline, and a read-only version-history
-reconstruction. Three more real bugs found the same way as every prior
-Era's — by actually running a migration or a controller against a real
-database, not by re-reading code: a credit-cost migration that would have
-silently under-priced a tool forever, a drifted model-import list that made
-autogenerate blind to a brand-new table, and a missing `db.commit()` that
-would have made every export silently free. 70 automated tests now exist
-where 23 did before this session. Every gap identified either has a spec,
-is built, or is explicitly catalogued as not yet spec'd (Part VI,
-Appendix B).*
+templates catalog, a full brand kit, Pillow-based export/resize, a
+read-only version-history reconstruction), then Era 12 followed the same
+session once the user actually opened the running CMS: confirmed
+`GET /tools` + `is_active` already covered "dynamic tool visibility" with
+zero new backend work (round-tripped to the frontend's own session and
+back), then built the one genuinely new piece — `nav_items`, the same
+show/hide mechanism extended to whole sidebar pages, confirmed against
+real screenshots of the running UI. Four real bugs total across both
+Eras, every one found by actually running a migration or controller
+against a real database, never by re-reading code twice. 72 automated
+tests now exist where 23 did before this session. Every gap identified
+either has a spec, is built, or is explicitly catalogued as not yet
+spec'd (Part VI, Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 
