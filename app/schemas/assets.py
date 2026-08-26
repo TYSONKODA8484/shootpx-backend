@@ -14,3 +14,8 @@ class AssetOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AssetListOut(BaseModel):
+    total: int
+    assets: list[AssetOut]
