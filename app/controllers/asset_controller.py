@@ -12,7 +12,7 @@ from app.models.user import User
 from app.schemas.assets import AssetListOut
 
 
-async def upload_asset(db: Session, team_id: str, current_user: User, file: UploadFile) -> Asset:
+async def create_asset_from_upload(db: Session, team_id: str, current_user: User, file: UploadFile) -> Asset:
     membership = get_membership(db, team_id, current_user.id)
     if not compute_permissions(membership.role).can_upload_assets:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to upload assets to this team")
@@ -45,6 +45,10 @@ async def upload_asset(db: Session, team_id: str, current_user: User, file: Uplo
     db.commit()
     db.refresh(asset)
     return asset
+
+
+async def upload_asset(db: Session, team_id: str, current_user: User, file: UploadFile) -> Asset:
+    return await create_asset_from_upload(db, team_id, current_user, file)
 
 
 def list_assets(
