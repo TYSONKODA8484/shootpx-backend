@@ -4,6 +4,7 @@ export interface FieldConfig {
   editable: boolean;
   enum_values: string[] | null;
   fk_entity: string | null;
+  help_text: string | null;
 }
 
 export interface EntityConfig {

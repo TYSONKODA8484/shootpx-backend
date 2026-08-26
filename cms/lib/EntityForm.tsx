@@ -81,6 +81,7 @@ export function EntityForm({ entity, id }: EntityFormProps) {
                 value={values[f.name]}
                 onChange={(v) => setValues((prev) => ({ ...prev, [f.name]: v }))}
               />
+              {f.help_text && <p className="mt-1 text-xs text-slate-500">{f.help_text}</p>}
             </div>
           );
         })}
