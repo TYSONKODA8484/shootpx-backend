@@ -6,13 +6,21 @@ themselves (those are covered by test_storage.py and core/cache.py already
 being trusted infra).
 """
 
+import asyncio
+import io
+
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
+from starlette.datastructures import Headers
 
 from app.controllers import asset_controller
 from app.models.asset import Asset, AssetKind, MediaType
 from app.models.team import Team, TeamMembership, new_id
 from app.models.user import User
+
+
+def _upload_file(filename="logo.png", content_type="image/png", content=b"fake-bytes"):
+    return UploadFile(file=io.BytesIO(content), filename=filename, headers=Headers({"content-type": content_type}))
 
 
 def _make_team_and_user(db, role="owner"):
@@ -102,4 +110,29 @@ def test_delete_asset_404s_for_a_non_member(db_session, monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         asset_controller.delete_asset(db_session, asset.id, outsider)
+    assert exc_info.value.status_code == 404
+
+
+def test_create_asset_from_upload_saves_and_returns_asset(db_session, monkeypatch):
+    team, user = _make_team_and_user(db_session)
+    saved = []
+    monkeypatch.setattr(asset_controller.storage, "save", lambda key, content: saved.append((key, content)))
+
+    asset = asyncio.run(
+        asset_controller.create_asset_from_upload(db_session, team.id, user, _upload_file())
+    )
+
+    assert asset.kind == AssetKind.upload.value
+    assert asset.media_type == MediaType.image.value
+    assert asset.team_id == team.id
+    assert len(saved) == 1
+
+
+def test_create_asset_from_upload_rejects_non_member(db_session, monkeypatch):
+    team, _owner = _make_team_and_user(db_session)
+    _, outsider = _make_team_and_user(db_session)
+    monkeypatch.setattr(asset_controller.storage, "save", lambda key, content: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(asset_controller.create_asset_from_upload(db_session, team.id, outsider, _upload_file()))
     assert exc_info.value.status_code == 404
