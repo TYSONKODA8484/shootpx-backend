@@ -10,9 +10,11 @@ from app.core.permissions import compute_permissions, get_membership
 from app.core.storage import storage
 from app.models.asset import Asset, AssetKind, MediaType
 from app.models.credit import CreditReason
+from app.models.generation_job import GenerationJob
 from app.models.team import new_id
+from app.models.tool import Tool
 from app.models.user import User
-from app.schemas.assets import AssetListOut
+from app.schemas.assets import AssetListOut, AssetVersionEntry, AssetVersionsOut
 from app.schemas.exports import ExportResponse, ExportResultItem
 
 
@@ -164,3 +166,45 @@ def export_asset(db: Session, asset_id: str, current_user: User, presets: list[s
     # balance update + ledger row stay pending and vanish when the
     # request's session closes uncommitted.
     return ExportResponse(exports=exports)
+
+
+def get_asset_versions(db: Session, asset_id: str, current_user: User) -> AssetVersionsOut:
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    get_membership(db, asset.team_id, current_user.id)
+
+    versions: list[AssetVersionEntry] = []
+    current_id: str | None = asset_id
+    seen: set[str] = set()  # guards against a pathological cycle
+
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        current_asset = db.get(Asset, current_id)
+        if current_asset is None:
+            break
+
+        job = (
+            db.query(GenerationJob)
+            .filter(GenerationJob.output_asset_id == current_id)
+            .order_by(GenerationJob.completed_at.desc(), GenerationJob.created_at.desc())
+            .first()
+        )
+        if job is None:
+            # dead end — this asset wasn't produced by any job (the
+            # original upload/import): the chain ends here.
+            versions.append(AssetVersionEntry(
+                asset_id=current_asset.id, url=current_asset.url, label="Original",
+                created_at=current_asset.created_at.isoformat(),
+            ))
+            break
+
+        tool = db.get(Tool, job.feature_type)
+        label = tool.display_name if tool else job.feature_type
+        versions.append(AssetVersionEntry(
+            asset_id=current_asset.id, url=current_asset.url, label=label,
+            created_at=(job.completed_at or job.created_at).isoformat(),
+        ))
+        current_id = job.source_asset_id
+
+    return AssetVersionsOut(versions=versions)
