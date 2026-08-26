@@ -26,3 +26,14 @@ def test_credit_transactions_is_create_only():
 def test_every_entity_pk_field_exists_on_its_model():
     for config in ENTITIES.values():
         assert hasattr(config.model, config.pk_field), config.name
+
+
+def test_tools_and_templates_is_active_have_help_text():
+    """is_active is the ONE field an admin actually needs to understand
+    without reading code — toggling it off hides the row from the live
+    Studio app immediately (GET /tools / GET /templates both filter on it,
+    no cache/restart involved). Everything else on these two entities is
+    either locked (tools' code-owned fields) or self-explanatory."""
+    for entity_name in ("tools", "templates"):
+        is_active = next(f for f in ENTITIES[entity_name].fields if f.name == "is_active")
+        assert is_active.help_text, f"{entity_name}.is_active has no help_text"
