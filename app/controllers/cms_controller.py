@@ -55,6 +55,7 @@ def describe_entities() -> list[dict[str, Any]]:
                     "editable": f.editable,
                     "enum_values": f.enum_values,
                     "fk_entity": f.fk_entity,
+                    "help_text": f.help_text,
                 }
                 for f in c.fields
             ],

@@ -35,6 +35,9 @@ class FieldConfig:
     enum_values: list[str] | None = None  # required when kind == "enum"
     fk_entity: str | None = None  # required when kind == "fk" — the
     # registered entity name (an ENTITIES key) it points to
+    help_text: str | None = None  # shown under the field's label in the CMS
+    # form — for a field name that isn't self-explanatory (e.g. "is_active"
+    # doesn't say WHAT goes inactive, or where)
 
 
 @dataclass(frozen=True)
@@ -222,7 +225,11 @@ register(EntityConfig(
         # sync_tools_to_db never touches it on an existing row
         FieldConfig("credit_cost", "int"),
         FieldConfig("pricing_config", "json"),
-        FieldConfig("is_active", "bool"),
+        FieldConfig("is_active", "bool", help_text=(
+            "Unchecked = this tool disappears from GET /tools and the Studio "
+            "app immediately — no restart, no cache to clear. Checked = it "
+            "shows up wherever the frontend lists tools."
+        )),
         _CREATED_AT,
         _UPDATED_AT,
     ],
@@ -346,6 +353,9 @@ register(EntityConfig(
         FieldConfig("model_id", "fk", fk_entity="ai-models"),
         FieldConfig("preset_payload", "json"),
         FieldConfig("credit_cost_override", "int"),
-        FieldConfig("is_active", "bool"),
+        FieldConfig("is_active", "bool", help_text=(
+            "Unchecked = this template disappears from GET /templates and "
+            "the Templates page immediately — no restart, no cache to clear."
+        )),
     ],
 ))
