@@ -13,6 +13,13 @@ class Template(Base):
     __tablename__ = "templates"
 
     id = Column(String, primary_key=True, default=new_id)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False)  # "Photoshoot" | "Mockup" |
+    # "On-model" | "Motion" | "UGC" — a plain string, not an enum, same
+    # lightweight-string convention as GenerationJob.feature_type/batch_id.
+    preview_asset_url = Column(String, nullable=True)  # null until a real
+    # preview image exists for this template — seeding a fake URL would be
+    # dishonest catalog data (see BACKEND-NEEDS.md's B3 section).
     feature_type = Column(String, ForeignKey("tools.feature_type"), nullable=False)
     model_id = Column(String, ForeignKey("ai_models.model_id"), nullable=True)
     preset_payload = Column(JSON, nullable=False, default=dict)  # fixed
