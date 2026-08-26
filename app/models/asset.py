@@ -1,7 +1,8 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, String
+import sqlalchemy as sa
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
 
 from app.core.db import Base
 from app.models.team import new_id
@@ -43,4 +44,9 @@ class Asset(Base):
     # image. Nullable FK on the "many" side (one import can produce several
     # images), same shape as GenerationJob.output_asset_id being the FK on
     # the "one" side for its single-output case.
+    is_saved_product = Column(Boolean, nullable=False, default=False, server_default=sa.false())  # the
+    # Brand Kit's "saved products" shortlist is just assets flagged here —
+    # no join table, since it's a per-asset flag with no extra metadata
+    # (BACKEND-NEEDS.md's B4 section). server_default so this can be added
+    # as NOT NULL against a table that may already have rows.
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
