@@ -1,6 +1,6 @@
 # B6 — Refine Version History Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** `GET /assets/{asset_id}/versions` — a read-only reconstruction of the Refine page's "Versions" rail, walking `generation_jobs.output_asset_id -> source_asset_id` backwards.
 
@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `app/schemas/assets.py`
 
-- [ ] **Step 1: Add the schemas**
+- [x] **Step 1: Add the schemas**
 
 Append to `app/schemas/assets.py`:
 
@@ -31,7 +31,7 @@ class AssetVersionsOut(BaseModel):
     versions: list[AssetVersionEntry]  # ordered newest-first
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add app/schemas/assets.py
@@ -48,7 +48,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Modify: `app/controllers/asset_controller.py`
 - Test: `tests/test_asset_versions.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """tests/test_asset_versions.py — get_asset_versions' backward-chain walk
@@ -152,12 +152,12 @@ def test_versions_404s_for_a_non_member(db_session):
     assert exc_info.value.status_code == 404
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_asset_versions.py -v`
 Expected: FAIL — `AttributeError: module 'app.controllers.asset_controller' has no attribute 'get_asset_versions'`
 
-- [ ] **Step 3: Implement `get_asset_versions`**
+- [x] **Step 3: Implement `get_asset_versions`**
 
 Add this import at the top of `app/controllers/asset_controller.py`:
 
@@ -214,17 +214,17 @@ def get_asset_versions(db: Session, asset_id: str, current_user: User) -> AssetV
     return AssetVersionsOut(versions=versions)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_asset_versions.py -v`
 Expected: PASS (4 passed)
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/controllers/asset_controller.py tests/test_asset_versions.py
@@ -240,7 +240,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `app/routes/asset_routes.py`
 
-- [ ] **Step 1: Add the import and route**
+- [x] **Step 1: Add the import and route**
 
 Add `AssetVersionsOut` to the existing `from app.schemas.assets import ...` line, then append:
 
@@ -254,12 +254,12 @@ def get_asset_versions(
     return asset_controller.get_asset_versions(db, asset_id, current_user)
 ```
 
-- [ ] **Step 2: Run the full suite**
+- [x] **Step 2: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add app/routes/asset_routes.py
@@ -274,7 +274,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Confirm the route exists**
+- [x] **Step 1: Confirm the route exists**
 
 Run: `./venv/Scripts/python.exe -m uvicorn app.main:app --port 8123` then
 `curl.exe -s http://localhost:8123/openapi.json | ./venv/Scripts/python.exe -c "import json,sys; print(sorted(json.load(sys.stdin)['paths'].get('/assets/{asset_id}/versions', {}).keys()))"`
