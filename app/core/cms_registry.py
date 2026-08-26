@@ -15,6 +15,7 @@ from app.models.asset import Asset
 from app.models.credit import CreditPack, CreditTransaction, TeamCreditBalance
 from app.models.generation_job import GenerationJob
 from app.models.invite import TeamInvite
+from app.models.nav_item import NavItem
 from app.models.payment import Payment
 from app.models.plan import Plan
 from app.models.product_import import ProductImport
@@ -357,5 +358,26 @@ register(EntityConfig(
             "Unchecked = this template disappears from GET /templates and "
             "the Templates page immediately — no restart, no cache to clear."
         )),
+    ],
+))
+
+register(EntityConfig(
+    name="nav-items",
+    label="Nav Items",
+    model=NavItem,
+    pk_field="key",
+    allow_create=False,  # the 12 pages are fixed by the Studio's own
+    # routing — nothing here creates a new page, only toggles existing ones
+    allow_delete=False,
+    search_fields=["label"],
+    fields=[
+        FieldConfig("key", "string", editable=False),
+        FieldConfig("label", "string", editable=False),
+        FieldConfig("is_active", "bool", help_text=(
+            "Unchecked = this page disappears from the Studio's sidebar "
+            "immediately — no restart, no cache to clear."
+        )),
+        _CREATED_AT,
+        _UPDATED_AT,
     ],
 ))
