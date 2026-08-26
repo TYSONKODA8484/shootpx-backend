@@ -19,3 +19,7 @@ class AssetOut(BaseModel):
 class AssetListOut(BaseModel):
     total: int
     assets: list[AssetOut]
+
+
+class AssetUpdate(BaseModel):
+    is_saved_product: bool

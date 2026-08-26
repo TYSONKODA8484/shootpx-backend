@@ -136,3 +136,23 @@ def test_create_asset_from_upload_rejects_non_member(db_session, monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(asset_controller.create_asset_from_upload(db_session, team.id, outsider, _upload_file()))
     assert exc_info.value.status_code == 404
+
+
+def test_update_asset_sets_is_saved_product(db_session):
+    team, user = _make_team_and_user(db_session)
+    asset = _make_asset(db_session, team, user)
+
+    updated = asset_controller.update_asset(db_session, asset.id, user, is_saved_product=True)
+
+    assert updated.is_saved_product is True
+    assert db_session.get(Asset, asset.id).is_saved_product is True
+
+
+def test_update_asset_404s_for_a_non_member(db_session):
+    team, owner = _make_team_and_user(db_session)
+    _, outsider = _make_team_and_user(db_session)
+    asset = _make_asset(db_session, team, owner)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asset_controller.update_asset(db_session, asset.id, outsider, is_saved_product=True)
+    assert exc_info.value.status_code == 404
