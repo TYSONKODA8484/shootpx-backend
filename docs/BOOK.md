@@ -101,6 +101,7 @@ Every section, table row, and ledger entry in this book carries one of these:
 - [Chapter 15 — Caching](#chapter-15--caching)
 - [Chapter 16 — Testing and the Test Console](#chapter-16--testing-and-the-test-console)
 - [Chapter 17 — Billing: Payments, Credits, Dynamic Pricing](#chapter-17--billing-payments-credits-dynamic-pricing)
+- [Chapter 18 — Category A Tools and the Six Studio Subsystems (B1–B6)](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6)
 
 **[Part IV — The Timeline](#part-iv--the-timeline)**
 
@@ -2260,6 +2261,180 @@ test never exercises twice.
 ---
 ---
 
+## Chapter 18 — Category A Tools and the Six Studio Subsystems (B1–B6)
+
+**Status: 🟢 CURRENT** — new, not a replacement of anything.
+
+**The problem:** `BACKEND-NEEDS.md` (a request document written from the
+Studio frontend's point of view, not this Book) catalogued 12 gaps between
+what the frontend's 12 screens needed and what this backend actually did.
+Only two real generation tools existed (`on_model_shots`, `ugc`); the
+Library, Activity, Templates, Brand, and Export flows had nothing behind
+them at all; Refine's version history had no query for data that already
+existed. This chapter is that whole list, shipped — 7 phases, in the
+priority order the request document itself argued for, each with its own
+design spec (`docs/superpowers/specs/2026-08-26-backend-needs-design.md`)
+and its own implementation plan under `docs/superpowers/plans/`.
+
+### A — 10 new tool registrations
+
+**Files:** [`app/tools/product_photoshoot.py`](../app/tools/product_photoshoot.py),
+`background_swap.py`, `mockup_studio.py`, `flat_lay_angles.py`,
+`magic_erase.py`, `inpaint.py`, `relight_shadows.py`, `upscale_4k.py`,
+`resize_outpaint.py`, `product_motion.py` — ten ~10-line files, each an
+exact copy of [Chapter 12](#chapter-12--the-tool-registry)'s
+`on_model_shots.py` pattern. Auto-discovered by `app/tools/__init__.py`'s
+`pkgutil` scan — no edit to that file, no new route, no new schema.
+`product_motion` is the one video tool (`output_media_type="video"`); the
+other nine are images.
+
+🐛 **A real bug, caught before it shipped:** `credit_cost` is DB-owned —
+`sync_tools_to_db()` only sets it on first INSERT, defaulting to `1`. The
+data migration that seeds these tools' real costs (`product_motion` needs
+`4`, not `1`) originally used a skip-if-exists guard, the same shape as
+the pre-existing `product_import`-registration migration. But
+`app/main.py` calls `sync_tools_to_db()` against the real
+`DATABASE_URL` at **import time** — and that import path is also hit by
+**pytest** importing `app.main` (the test fixture only overrides the
+request-scoped `get_db` dependency, not this module-level call). Running
+the test suite before the migration had already inserted all 10 rows with
+the default cost of 1, so the migration's guard saw existing rows and
+skipped — `product_motion` would have silently stayed under-priced
+forever. Fixed by making the migration an `ON CONFLICT DO UPDATE` upsert
+instead of skip-if-exists. See
+[`alembic/versions/4e95a697f741_...py`](../alembic/versions/4e95a697f741_seed_category_a_tool_costs.py).
+
+`input_payload` stays fully unvalidated (`dict[str, Any]`), per the
+request document's own recommendation — no real `AIProvider` exists yet
+to dictate a required shape, so nailing one down now would be guessing.
+
+### B1 — Asset Library (list + delete)
+
+**Files:** [`app/core/storage.py`](../app/core/storage.py) (`Storage.delete()`,
+new), [`app/controllers/asset_controller.py`](../app/controllers/asset_controller.py)
+(`list_assets`, `delete_asset`), [`app/routes/asset_routes.py`](../app/routes/asset_routes.py).
+
+`GET /teams/{team_id}/assets` (filters: `kind`, `media_type`; paginated) and
+`DELETE /assets/{asset_id}` — the first real delete flow in this app.
+Delete order: `storage.delete()` the file → `cache.delete("media", id)` →
+delete the DB row. `core/cache.py`'s `delete()` **already existed** —
+`BACKEND-NEEDS.md` claimed it needed adding; it didn't.
+`GenerationJob.output_asset_id` rows pointing at a deleted asset are left
+alone on purpose — a job stays queryable audit history even after its
+output image is gone; the frontend just handles a 404'd URL.
+
+### B2 — Activity Feed
+
+**Files:** [`app/controllers/activity_controller.py`](../app/controllers/activity_controller.py),
+[`app/routes/activity_routes.py`](../app/routes/activity_routes.py),
+[`app/schemas/activity.py`](../app/schemas/activity.py).
+
+`GET /teams/{team_id}/activity` — a **computed** feed, no new table.
+Unions recent `generation_jobs` (done/failed), `product_imports`
+(done/failed), and a **curated** subset of `credit_transactions`
+(`plan_grant`, `topup_purchase`, `subscription_cancelled` — deliberately
+**not** `generation_spend`, which fires once per job and would drown out
+everything else). Each source query is capped at `limit` rows
+independently, then merged and re-sorted in Python — an approximation of
+true cross-stream keyset pagination, acceptable since there's no
+dedicated table to paginate against properly.
+
+### B3 — Templates Catalog
+
+**Files:** [`app/models/template.py`](../app/models/template.py) (+`name`,
+`category`, `preview_asset_url` columns), `app/controllers/template_controller.py`,
+`app/routes/template_routes.py`, `app/schemas/templates.py`.
+
+The `templates` table has existed since Chapter 17 (built for
+`credit_cost_override`) but had no rows and no columns for what a catalog
+UI needs to display. One schema migration adds the three columns; one
+data migration seeds 24 real rows across 5 categories (Photoshoot, Mockup,
+On-model, Motion, UGC), each tied to a real `feature_type` with a
+`preset_payload` matching that tool's `input_payload` shape.
+`preview_asset_url` is seeded `NULL` for all of them — no real preview
+images exist yet, and seeding a fake URL would be dishonest catalog data.
+`GET /templates` (filters: `category`, `q`; paginated) needs no auth, same
+spirit as `GET /tools`.
+
+### B4 — Brand Kit
+
+**Files:** [`app/models/brand_kit.py`](../app/models/brand_kit.py) (new:
+`BrandKit`, `BrandMark`), `app/controllers/brand_kit_controller.py`,
+`app/routes/brand_kit_routes.py`, `app/schemas/brand_kit.py`, plus
+`assets.is_saved_product` (a plain boolean flag — "saved products" is just
+assets filtered to that flag, no join table needed for a per-asset flag
+with no extra metadata).
+
+`GET`/`PUT /teams/{team_id}/brand-kit` (lazy-creates an empty kit on first
+`GET`, same spirit as personal-team creation), `POST`/`DELETE
+.../brand-kit/marks` (a mark **is** a real `Asset`, `kind="upload"` — mark
+upload reuses `asset_controller.create_asset_from_upload()`, extracted
+from the pre-existing `upload_asset()` specifically so this wouldn't need
+duplicating), and `PATCH /assets/{asset_id}` for `is_saved_product`.
+Deleting a mark removes only the link row, never the underlying `Asset` —
+that's a separate, explicit B1 delete if the file itself should go too.
+
+🐛 **A real bug, caught before it shipped:** `alembic/env.py` keeps its
+**own** separate list of model imports, not shared with `app/main.py`'s.
+The first `alembic revision --autogenerate` attempt for this migration
+silently produced only the `is_saved_product` column and missed both new
+tables entirely — a model that's never imported never registers on
+`Base.metadata` for autogenerate to diff against. Fixed by adding
+`brand_kit`'s import to `env.py`; nothing else in that list had drifted.
+Worth knowing if a *future* new model's migration mysteriously autogenerates
+empty: check this list first.
+
+### B5 — Export / Resize
+
+**Files:** [`app/core/image_ops.py`](../app/core/image_ops.py) (new,
+Pillow), `app/controllers/asset_controller.py` (`export_asset`),
+`assets.source_asset_id` (new, self-referential FK), `AssetKind.exported`,
+`CreditReason.export_spend`.
+
+`POST /assets/{asset_id}/export` — the one item in this chapter that isn't
+"add a table + routes": a real image-processing step. Five named
+marketplace presets (Shopify/Amazon/Etsy/Instagram/master-PNG), each
+either crop-to-fill (`"fit"`), contain-and-white-pad (`"pad"` — Amazon's
+white-background requirement; a plain letterbox, **not** real background
+removal, which is `background_swap`'s job, a Category-A tool, not this
+one), or contain-and-cap-without-upscaling (`"contain"`, the master PNG).
+Runs **synchronously in the request**, not queued through arq — a Pillow
+resize is low-single-digit milliseconds, so queuing it would mean
+inventing a job/poll shape for something that doesn't need one. Charges 1
+credit per requested preset.
+
+🐛 **A real bug, caught by manual verification against the live Postgres
+DB (not the sqlite test fixture):** `core/credits.py`'s
+`apply_credit_delta()` does **not** call `db.commit()` itself — every
+existing caller (`app/worker.py`, three separate call sites) commits
+immediately after it. `export_asset()`'s first version didn't, meaning
+the balance update and the ledger row would both stay pending and vanish
+the moment the request's session closed uncommitted — the export would
+silently be free every time. The automated test suite couldn't have
+caught this: `apply_credit_delta` runs Postgres-only raw SQL (`now()`,
+`ON CONFLICT`) that sqlite can't execute at all, so the unit test mocks
+that seam rather than exercising it. Confirmed fixed by running the real
+call against a real Postgres session, closing it, then opening a
+**second, independent** session and reading the balance/ledger back.
+
+### B6 — Refine Version History
+
+**Files:** `app/controllers/asset_controller.py` (`get_asset_versions`),
+`app/schemas/assets.py` (`AssetVersionEntry`, `AssetVersionsOut`).
+
+`GET /assets/{asset_id}/versions` — **read-only, no new table.** Every
+`GenerationJob` already has `source_asset_id`/`output_asset_id`; this just
+walks that chain backwards from the given asset (find the job whose
+`output_asset_id` is the current asset → label it with that job's tool's
+`display_name` → move to `job.source_asset_id` → repeat) until a dead end
+(no job produced the current asset — the original upload/import),
+labeled `"Original"`. Deliberately built last, per the request document's
+own reasoning: it has nothing to show until Category A's tools have real
+usage chained via `source_asset_id`.
+
+---
+---
+
 # Part IV — The Timeline
 
 The story in the order it actually happened. Every entry is a real commit.
@@ -2632,6 +2807,36 @@ No credit-provenance tracking was needed — the flat cap alone produces the
 correct answer for every case the user described.
 
 ---
+
+## Era 11 — The Backend-Needs Roadmap, All Seven Phases *(2026-08-26, commits `d38fe7b`..`dddb33c`)*
+
+A request document (`BACKEND-NEEDS.md`), written from the Studio
+frontend's point of view, catalogued 12 gaps between its 12 screens and
+this backend. Turned into a design spec, then one implementation plan per
+phase (both under `docs/superpowers/`), executed in the request
+document's own priority order: 10 new tool registrations, then Asset
+Library, Activity Feed, Templates Catalog, Brand Kit, Export/Resize, and
+finally Refine Version History (deliberately last — it has nothing to
+show until the earlier tools have real usage chained together). Full
+writeup: [Chapter 18](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6).
+
+Three real bugs found and fixed along the way, none by re-reading code —
+all by actually running a migration or a controller against a real
+database: a credit-cost-seeding migration that would have silently
+under-priced `product_motion` forever (pytest's own import of `app.main`
+triggers the same DB sync `alembic upgrade` does, so the "skip if
+already exists" guard saw rows the app itself had already inserted);
+`alembic/env.py` maintaining its own separate, driftable list of model
+imports from `app/main.py`'s, which made a brand-new table invisible to
+autogenerate; and `export_asset()` missing the `db.commit()` every other
+`apply_credit_delta()` caller in this codebase already includes, caught
+only by testing against a real Postgres session and re-reading the
+result back from a second, independent one. 70 automated tests now cover
+every phase (up from the 23 this session started with); `storage/`'s
+leftover manual-testing files were cleared as agreed with the user
+(no DB rows were touched — only local disk).
+
+---
 ---
 
 # Part V — The Deprecation Ledger
@@ -2999,7 +3204,7 @@ no spec yet:
 | `GET /tools`, `GET /plans`, `GET /billing/credit-packs` | Every route added so far lets you *spend* against an id you already know — nothing lets a client *discover* one | ✅ Built and verified live — [Chapter 12](#chapter-12--the-tool-registry) / [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) |
 | API keys for programmatic access | A real B2B customer (see the lingerie-tool example) wants to integrate directly, not click through a browser. Right now the *only* auth path is the Firebase-popup + session-cookie flow — there is no way for a server-to-server caller to authenticate at all | Not yet spec'd |
 | Webhooks for job completion | `GET /jobs` polling works, but every comparable platform also offers "tell me when it's done" instead of making the client poll forever | Not yet spec'd |
-| Asset list / delete | Upload exists; there's no way to browse or remove your own files | Not yet spec'd. ⚠️ Delete requires adding media-cache invalidation at the same time ([Ch. 15](#chapter-15--caching)) |
+| Asset list / delete | Upload exists; there's no way to browse or remove your own files | ✅ Built and verified live — [Chapter 18](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6), B1 |
 | Team member removal / leave-team | You can invite; nothing lets you remove a member or leave a team you're on | Not yet spec'd |
 | Team delete | No such endpoint exists | Not yet spec'd — deliberately out of scope in Spec A too |
 | User profile update / account deletion | No `PATCH /auth/me`, no way to delete your own account (GDPR-relevant once real people's photos are involved — see the content-safety note this session raised for the lingerie tool) | Not yet spec'd |
@@ -3020,10 +3225,12 @@ Per-tool request-building (generic `input_payload` → that provider's actual
 request shape) and response-parsing live **in that tool's own file** in
 `app/tools/`. Nothing shared gets more crowded as tools are added.
 
-### The other 21 tools
+### The other 11 tools
 
-Two of 23 exist (`on_model_shots`, `ugc`), both on the mock. Adding one is:
-copy `_template.py`, fill in four fields, add one import line.
+12 of 23 exist now (`on_model_shots`, `ugc`, plus the 10 Category-A tools
+from [Chapter 18](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6)),
+all on the mock. Adding one is: copy `_template.py`, fill in four fields,
+no import-list edit needed (auto-discovery, since Chapter 12 Stage 4).
 
 ### Known gaps, ranked by how much they'd hurt
 
@@ -3032,7 +3239,6 @@ copy `_template.py`, fill in four fields, add one import line.
 | **No automated test suite** | The single biggest risk. All verification is manual or one script | `scripts/test_pipeline.py` is a good skeleton to grow from |
 | **Cloud storage (R2/S3)** | Local disk doesn't survive a deploy | One-file change behind the `Storage` seam ([§8](#8-the-swappable-seam-pattern)) |
 | **`output_media_type` unchecked** | A misconfigured tool would quietly mislabel an asset | Add the cross-check once a video-capable provider exists |
-| **No asset list/delete endpoints** | Users can't manage their own files | ⚠️ Adding delete **requires** adding media-cache invalidation at the same time ([Ch. 15](#chapter-15--caching)) |
 | **Owner vs editor undefined** | Only team management is owner-only today | Change `compute_permissions()` — and **only** that file |
 | **Transient vs permanent errors** | A network blip fails a job permanently, same as a real error | Deliberately deferred until a real provider's actual failure modes are known |
 | **Invite-email-mismatch messaging** | Someone invited at one address who signs in with another is silently not joined | Needs invite context in the URL; no frontend to show it in yet |
@@ -3063,7 +3269,8 @@ copy `_template.py`, fill in four fields, add one import line.
 shootpx-backend/
 ├── alembic.ini                     Alembic config (its sqlalchemy.url is NOT used — see env.py)
 ├── alembic/
-│   ├── env.py                      🟢 Imports the APP's engine + all 13 models
+│   ├── env.py                      🟢 Imports the APP's engine + all 14 models (🐛 Era 11:
+│   │                               this list had drifted from app/main.py's — see Ch. 18, B4)
 │   └── versions/
 │       ├── e6166cbe300b_...py      Baseline — adopts the pre-existing live DB
 │       ├── b55cfad6e50d_...py      Adds product_imports + assets.product_import_id
@@ -3075,10 +3282,16 @@ shootpx-backend/
 │       ├── 1fa978c93dc2_...py      🟢 The 8 billing tables + generation_jobs.credit_cost
 │       │                           + tools.default_model_id's FK (deferred from Spec A)
 │       ├── baa7b2ede411_...py      🟢 Seeds the Free plan, backfills every existing team onto it
-│       └── 53d441e69de6_...py      🟢 Adds product_imports.credit_cost (Era 7)
+│       ├── 53d441e69de6_...py      🟢 Adds product_imports.credit_cost (Era 7)
+│       ├── 3adad199e5b6_...py      🟢 Registers product_import as a discoverable tool row
+│       ├── 4e95a697f741_...py      🟢 Seeds Category A tools' real credit_cost (Era 11 — 🐛 upsert, not skip-if-exists)
+│       ├── 7e11343179fd_...py      🟢 Adds templates.name/category/preview_asset_url
+│       ├── 8c59f976c159_...py      🟢 Seeds 24 real templates across 5 categories
+│       ├── a4f9c148aabb_...py      🟢 Adds brand_kits + brand_marks + assets.is_saved_product
+│       └── d38aaad06785_...py      🟢 Adds assets.source_asset_id (for exports)
 │
 ├── app/
-│   ├── main.py                     Creates the app, mounts /files, registers 8 routers,
+│   ├── main.py                     Creates the app, mounts /files, registers 12 routers,
 │                                   syncs the tools table at boot
 │   ├── worker.py                   🟢 THE WORKER PROCESS — lock, submit/poll, Retry,
 │                                   + the refill_due_credits cron job
@@ -3089,7 +3302,8 @@ shootpx-backend/
 │   │   ├── security.py             Session cookie signing (itsdangerous)
 │   │   ├── firebase.py             Admin SDK: verify tokens, mint magic links
 │   │   ├── email.py                SMTP send (via Resend)
-│   │   ├── storage.py              🔌 Storage interface + LocalStorage
+│   │   ├── storage.py              🔌 Storage interface + LocalStorage (🟢 + delete()/read(), Era 11)
+│   │   ├── image_ops.py            🟢 Pillow resize/reformat presets for export (Era 11)
 │   │   ├── ai_provider.py          🔌 AIProvider (submit/poll) + MockAIProvider
 │   │   ├── payment_provider.py     🔌 🟢 PaymentProvider (subscribe/order/cancel/webhook) + RazorpayProvider
 │   │   ├── pricing.py              🟢 resolve_credit_cost() — template override -> model+modifiers -> flat
@@ -3108,6 +3322,16 @@ shootpx-backend/
 │   │   ├── sync.py                 🟢 Mirrors the registry into the tools DB table
 │   │   ├── on_model_shots.py       Tool 1
 │   │   ├── ugc.py                  Tool 2
+│   │   ├── product_photoshoot.py   🟢 Tool 3 (Era 11 — Category A)
+│   │   ├── background_swap.py      🟢 Tool 4 (Era 11 — Category A)
+│   │   ├── mockup_studio.py        🟢 Tool 5 (Era 11 — Category A)
+│   │   ├── flat_lay_angles.py      🟢 Tool 6 (Era 11 — Category A)
+│   │   ├── magic_erase.py          🟢 Tool 7 (Era 11 — Category A)
+│   │   ├── inpaint.py              🟢 Tool 8 (Era 11 — Category A)
+│   │   ├── relight_shadows.py      🟢 Tool 9 (Era 11 — Category A)
+│   │   ├── upscale_4k.py           🟢 Tool 10 (Era 11 — Category A)
+│   │   ├── resize_outpaint.py      🟢 Tool 11 (Era 11 — Category A)
+│   │   ├── product_motion.py       🟢 Tool 12 (Era 11 — Category A, video, 4 credits)
 │   │   └── _template.py            Copy-paste starter (leading _ = never auto-imported)
 │   │
 │   ├── middleware/
@@ -3127,41 +3351,56 @@ shootpx-backend/
 │   │   ├── credit.py               🟢 team_credit_balances, credit_transactions, credit_packs
 │   │   ├── payment.py              🟢 payments
 │   │   ├── ai_model.py             🟢 ai_models
-│   │   └── template.py             🟢 templates
+│   │   ├── template.py             🟢 templates (+ name/category/preview_asset_url, Era 11)
+│   │   └── brand_kit.py            🟢 BrandKit, BrandMark (Era 11)
 │   │
 │   ├── schemas/                    ── Pydantic request/response shapes ──
-│   │   ├── auth.py  teams.py  assets.py  generation.py  product_import.py
+│   │   ├── auth.py  teams.py  generation.py  product_import.py
+│   │   ├── assets.py                🟢 AssetOut/List/Update/VersionEntry/VersionsOut (Era 11)
 │   │   ├── tools.py                 🟢 ToolOut
-│   │   └── billing.py               🟢 PlanOut, CreditPackOut, Subscribe/Cancel/TopupRequest, BillingStatusOut
+│   │   ├── billing.py               🟢 PlanOut, CreditPackOut, Subscribe/Cancel/TopupRequest, BillingStatusOut
+│   │   ├── activity.py              🟢 ActivityEvent, ActivityFeedOut (Era 11)
+│   │   ├── templates.py             🟢 TemplateOut, TemplateListOut (Era 11)
+│   │   ├── brand_kit.py             🟢 BrandKitOut, BrandKitUpdate, BrandMarkOut (Era 11)
+│   │   └── exports.py               🟢 ExportRequest, ExportResultItem, ExportResponse (Era 11)
 │   │
 │   ├── controllers/                ── THE ACTUAL LOGIC ──
 │   │   ├── auth_controller.py      upsert user (now returns is_new too), session cookie
 │   │   ├── team_controller.py      create/list/rename teams, create_personal_team
 │   │                               (+ assign_free_plan), add member (+ plan limit check), accept invites
-│   │   ├── asset_controller.py     upload
+│   │   ├── asset_controller.py     🟢 upload (now create_asset_from_upload + thin wrapper),
+│   │                               list/delete/update (is_saved_product), export, get_asset_versions (Era 11)
 │   │   ├── generation_controller.py  single + bulk generate (+ Tool.is_active + credit
 │   │                               checks, incl. the held-credits race fix), job/batch status
 │   │   ├── billing_controller.py   🟢 subscribe/cancel/topup, webhook processing, free-plan assignment
-│   │   └── product_import_controller.py
+│   │   ├── product_import_controller.py
+│   │   ├── activity_controller.py  🟢 computed feed over jobs/imports/curated credit txns (Era 11)
+│   │   ├── template_controller.py  🟢 public catalog list/filter/search (Era 11)
+│   │   └── brand_kit_controller.py 🟢 get-or-create kit, update, marks upload/delete (Era 11)
 │   │
 │   └── routes/                     ── thin URL → controller wiring ──
 │       ├── health_routes.py  auth_routes.py  team_routes.py
 │       ├── asset_routes.py   generation_routes.py  product_import_routes.py
 │       ├── admin_routes.py          🟢 POST /admin/cache/clear (dev-only), GET /tools
-│       └── billing_routes.py        🟢 GET /plans, /billing/credit-packs, subscribe/cancel/topup/webhook/teams
+│       ├── billing_routes.py        🟢 GET /plans, /billing/credit-packs, subscribe/cancel/topup/webhook/teams
+│       ├── activity_routes.py       🟢 GET /teams/{id}/activity (Era 11)
+│       ├── template_routes.py       🟢 GET /templates (Era 11)
+│       └── brand_kit_routes.py      🟢 brand-kit get/put/marks (Era 11)
 │
 ├── scripts/test_pipeline.py        End-to-end proof against a LIVE server
 ├── test-console/index.html         Hand-driven UI — 8 sections (tools, cache, product import, billing added)
 ├── docs/
 │   ├── BOOK.md                     ← you are here
-│   ├── superpowers/plans/2026-08-17-generation-pipeline.md
-│   └── superpowers/specs/          Design docs — both A and B built (2026-08-19)
+│   ├── superpowers/plans/          🟢 One plan per Era-11 phase (2026-08-26) +
+│   │                               2026-08-17-generation-pipeline.md
+│   └── superpowers/specs/          Design docs
 │       ├── 2026-08-19-personal-teams-and-tools-registry-design.md
-│       └── 2026-08-19-billing-credits-and-payments-design.md
+│       ├── 2026-08-19-billing-credits-and-payments-design.md
+│       └── 2026-08-26-backend-needs-design.md   🟢 Category A + B1–B6 (Era 11)
 ├── README.md                       Setup + day-to-day usage
 ├── DESIGN.md                       Architecture reference + decision rationale
 ├── .env.example                    The setup checklist (now incl. RAZORPAY_* )
-└── requirements.txt                (+ razorpay==2.0.1)
+└── requirements.txt                (+ razorpay==2.0.1, 🟢 Pillow==12.3.0 for export)
 ```
 
 **Legend:** 🔌 = a swappable seam
@@ -3186,6 +3425,17 @@ shootpx-backend/
 | `POST` | `/teams/{id}/members` | ✅ **owner** | Direct-add if they have an account, else pending invite + email |
 | `PATCH` | `/teams/{id}` | ✅ **owner** | 🟢 Rename |
 | `POST` | `/teams/{id}/assets` | ✅ + `can_upload_assets` | Multipart upload |
+| `GET` | `/teams/{id}/assets` | ✅ member | 🟢 List, filterable by `kind`/`media_type`, paginated (Era 11) |
+| `DELETE` | `/assets/{id}` | ✅ + `can_upload_assets` | 🟢 Real delete: file + cache + DB row. Leaves any `GenerationJob` pointing at it alone (Era 11) |
+| `PATCH` | `/assets/{id}` | ✅ + `can_upload_assets` | 🟢 `{ is_saved_product }` — the one mutation an otherwise-immutable asset has (Era 11) |
+| `POST` | `/assets/{id}/export` | ✅ + `can_upload_assets` | 🟢 Resize/reformat into named marketplace presets, 1 credit each, synchronous (Era 11) |
+| `GET` | `/assets/{id}/versions` | ✅ member | 🟢 Read-only version chain via `generation_jobs.source_asset_id` (Era 11) |
+| `GET` | `/teams/{id}/activity` | ✅ member | 🟢 Computed feed over jobs/imports/curated credit txns (Era 11) |
+| `GET` | `/templates` | — | 🟢 Catalog: `category`/`q` filters, paginated (Era 11) |
+| `GET` | `/teams/{id}/brand-kit` | ✅ member | 🟢 Lazy-creates an empty kit on first call (Era 11) |
+| `PUT` | `/teams/{id}/brand-kit` | ✅ + `can_upload_assets` | 🟢 Full replace of palette/fonts (Era 11) |
+| `POST` | `/teams/{id}/brand-kit/marks` | ✅ + `can_upload_assets` | 🟢 Multipart — a mark is a real `Asset` (Era 11) |
+| `DELETE` | `/brand-kit/marks/{id}` | ✅ + `can_upload_assets` | 🟢 Removes only the link row, not the `Asset` (Era 11) |
 | `POST` | `/generate` | ✅ + `can_generate` | Enqueue one job. **Returns immediately** |
 | `POST` | `/generate/bulk` | ✅ + `can_generate` | Up to 100 assets, one `feature_type`, shared `batch_id` |
 | `GET` | `/jobs?ids=a,b,c` | ✅ | Poll many jobs. **Silently omits** inaccessible ones |
@@ -3213,7 +3463,6 @@ spec behind it ([Part VI](#part-vi--what-comes-next) has the full reasoning).
 |---|---|---|
 | — | API keys (server-to-server auth) | not yet spec'd |
 | — | Job-completion webhooks | not yet spec'd |
-| — | Asset list / delete | not yet spec'd |
 | — | Team member removal / leave-team / delete-team | not yet spec'd |
 | — | User profile update / account deletion | not yet spec'd |
 | — | Usage/analytics endpoints | not yet spec'd |
@@ -3234,9 +3483,11 @@ spec behind it ([Part VI](#part-vi--what-comes-next) has the full reasoning).
 
 | Term | Meaning here |
 |---|---|
-| **Asset** | One file. Uploaded, generated, or scraped — always one row in `assets` |
+| **Asset** | One file. Uploaded, generated, scraped, or **exported** — always one row in `assets` |
 | **arq** | The Redis-backed task queue library. Provides `Retry` |
 | **Batch** | A group of jobs from one `/generate/bulk`. Just a shared string, no table |
+| **Brand Kit** | One-per-team row (`palette`, `heading_font`, `body_font`) + its `BrandMark` links to real `Asset`s — the Brand page's data |
+| **Export preset** | A named resize/reformat target (e.g. `shopify_product`) defined in `core/image_ops.py`'s `EXPORT_PRESETS` — width, height, output format, and a fit mode |
 | **Detached instance** | A SQLAlchemy object with no live `Session`. Safe to read columns from; **raises** on relationship access |
 | **`external_job_id`** | The *provider's* id for a job. `NULL` means "not submitted yet" |
 | **`feature_type`** | The dispatch key naming which tool to run. Must be registered |
@@ -3339,20 +3590,22 @@ Small inaccuracies found in the codebase while writing this book. None are bugs
 
 **End of the ShootPX Backend Book.**
 
-*Last chapter: [Chapter 17](#chapter-17--billing-payments-credits-dynamic-pricing) ·
-Last timeline entry: Era 10, 2026-08-19 — both specs built, product imports
-wired into the credit system with real discoverability, real payments made
-by an actual user through the actual UI (not a script) surfacing this
-session's two most important bugs — webhooks alone don't work without a
-publicly reachable URL, and re-subscribing after a cancellation silently
-never credited anyone — both fixed and verified against the user's own
-real account and real re-created scenarios, and cancellation now claws
-back credits by a precise, user-specified formula (verified against two
-hand-computed worked examples before the fix was even written). Five real
-bugs found this session, every one by actually running the product at a
-state transition a straight-through test never exercises twice; none found
-by re-reading code alone. Every gap identified either has a spec, is
-built, or is explicitly catalogued as not yet spec'd (Part VI, Appendix B).*
+*Last chapter: [Chapter 18](#chapter-18--category-a-tools-and-the-six-studio-subsystems-b1b6) ·
+Last timeline entry: Era 11, 2026-08-26 — a frontend-authored request
+document (`BACKEND-NEEDS.md`) turned into a design spec and seven
+implementation plans, all seven built and verified live: 10 new tool
+registrations, real asset list/delete, a computed activity feed, a seeded
+templates catalog, a full brand kit (marks/palette/type/saved-products), a
+Pillow-based export/resize pipeline, and a read-only version-history
+reconstruction. Three more real bugs found the same way as every prior
+Era's — by actually running a migration or a controller against a real
+database, not by re-reading code: a credit-cost migration that would have
+silently under-priced a tool forever, a drifted model-import list that made
+autogenerate blind to a brand-new table, and a missing `db.commit()` that
+would have made every export silently free. 70 automated tests now exist
+where 23 did before this session. Every gap identified either has a spec,
+is built, or is explicitly catalogued as not yet spec'd (Part VI,
+Appendix B).*
 
 **When you change the code, [append to this book](#appendix-d-how-to-append-to-this-book).**
 
