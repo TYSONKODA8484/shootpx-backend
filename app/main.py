@@ -25,6 +25,7 @@ from app.models import user as user_models  # noqa: F401  (registers User on Bas
 # mapped class registered on Base before mapper configuration runs, since
 # relationships reference each other by string (e.g. Team.invites ->
 # "TeamInvite"), same reason app/worker.py imports a couple of these too.
+from app.routes.activity_routes import router as activity_router
 from app.routes.admin_routes import router as admin_router
 from app.routes.asset_routes import router as asset_router
 from app.routes.auth_routes import router as auth_router
@@ -49,6 +50,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(teams_router)
 app.include_router(asset_router)
+app.include_router(activity_router)
 app.include_router(generation_router)
 app.include_router(product_import_router)
 app.include_router(admin_router)
