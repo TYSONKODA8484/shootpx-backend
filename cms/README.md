@@ -54,7 +54,9 @@ All routes below live on the **backend** (`NEXT_PUBLIC_BACKEND_URL`), under
 `feature_type`/`display_name`/`output_media_type` are managed by the
 backend's tool registry, not editable here — see `app/models/tool.py`),
 `ai-models`, `assets`, `generation-jobs`, `product-imports`, `payments`,
-`templates`.
+`templates`, `nav-items` (read-only `key`/`label` — the 12 Studio sidebar
+pages, seeded once by migration; toggle `is_active` to show/hide a whole
+page in the Studio app, same mechanism as `tools.is_active`).
 
 ## Known limitations (v1)
 
