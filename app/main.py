@@ -31,6 +31,7 @@ from app.routes.admin_routes import router as admin_router
 from app.routes.asset_routes import router as asset_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.billing_routes import router as billing_router
+from app.routes.brand_kit_routes import router as brand_kit_router
 from app.routes.cms_routes import router as cms_router
 from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
@@ -58,6 +59,7 @@ app.include_router(product_import_router)
 app.include_router(template_router)
 app.include_router(admin_router)
 app.include_router(billing_router)
+app.include_router(brand_kit_router)
 app.include_router(cms_router)
 
 try:
