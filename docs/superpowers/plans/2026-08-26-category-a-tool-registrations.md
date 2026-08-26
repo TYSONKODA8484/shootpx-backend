@@ -1,6 +1,6 @@
 # Category A — 10 Tool Registrations Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Register 10 new `feature_type`s (`product_photoshoot`, `background_swap`, `mockup_studio`, `flat_lay_angles`, `magic_erase`, `inpaint`, `relight_shadows`, `upscale_4k`, `resize_outpaint`, `product_motion`) so `/generate` and `/generate/bulk` work for them immediately via `MockAIProvider`.
 
@@ -15,7 +15,7 @@
 **Files:**
 - Create: `tests/test_category_a_tools.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """tests/test_category_a_tools.py — verifies the 10 Category-A tools from
@@ -64,12 +64,12 @@ def test_sync_creates_rows_with_correct_media_type(db_session):
             assert rows[feature_type].output_media_type == "image", feature_type
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_category_a_tools.py -v`
 Expected: FAIL — `assert not missing` fails listing all 10 feature types (none registered yet).
 
-- [ ] **Step 3: Commit the failing test**
+- [x] **Step 3: Commit the failing test**
 
 ```bash
 git add tests/test_category_a_tools.py
@@ -94,7 +94,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Create: `app/tools/resize_outpaint.py`
 - Create: `app/tools/product_motion.py`
 
-- [ ] **Step 1: Create `app/tools/product_photoshoot.py`**
+- [x] **Step 1: Create `app/tools/product_photoshoot.py`**
 
 ```python
 """product_photoshoot — the core "stage a product photo, generate" tool.
@@ -119,7 +119,7 @@ register(
 )
 ```
 
-- [ ] **Step 2: Create `app/tools/background_swap.py`**
+- [x] **Step 2: Create `app/tools/background_swap.py`**
 
 ```python
 """background_swap — replaces a product shot's background. Routes to
@@ -140,7 +140,7 @@ register(
 )
 ```
 
-- [ ] **Step 3: Create `app/tools/mockup_studio.py`**
+- [x] **Step 3: Create `app/tools/mockup_studio.py`**
 
 ```python
 """mockup_studio — places a design onto an apparel/packaging/device mockup.
@@ -161,7 +161,7 @@ register(
 )
 ```
 
-- [ ] **Step 4: Create `app/tools/flat_lay_angles.py`**
+- [x] **Step 4: Create `app/tools/flat_lay_angles.py`**
 
 ```python
 """flat_lay_angles — generates additional flat-lay/angle shots of a
@@ -182,7 +182,7 @@ register(
 )
 ```
 
-- [ ] **Step 5: Create `app/tools/magic_erase.py`**
+- [x] **Step 5: Create `app/tools/magic_erase.py`**
 
 ```python
 """magic_erase — removes a brushed-out region of an image. Routes to
@@ -207,7 +207,7 @@ register(
 )
 ```
 
-- [ ] **Step 6: Create `app/tools/inpaint.py`**
+- [x] **Step 6: Create `app/tools/inpaint.py`**
 
 ```python
 """inpaint — replaces a brushed-in region of an image with prompted
@@ -229,7 +229,7 @@ register(
 )
 ```
 
-- [ ] **Step 7: Create `app/tools/relight_shadows.py`**
+- [x] **Step 7: Create `app/tools/relight_shadows.py`**
 
 ```python
 """relight_shadows — re-lights a product shot and adjusts its shadows.
@@ -250,7 +250,7 @@ register(
 )
 ```
 
-- [ ] **Step 8: Create `app/tools/upscale_4k.py`**
+- [x] **Step 8: Create `app/tools/upscale_4k.py`**
 
 ```python
 """upscale_4k — upscales an image to 4K. Routes to MockAIProvider for now,
@@ -272,7 +272,7 @@ register(
 )
 ```
 
-- [ ] **Step 9: Create `app/tools/resize_outpaint.py`**
+- [x] **Step 9: Create `app/tools/resize_outpaint.py`**
 
 ```python
 """resize_outpaint — extends an image's canvas via outpainting. Routes to
@@ -293,7 +293,7 @@ register(
 )
 ```
 
-- [ ] **Step 10: Create `app/tools/product_motion.py`**
+- [x] **Step 10: Create `app/tools/product_motion.py`**
 
 ```python
 """product_motion — generates a short product motion clip (orbit, push-in,
@@ -317,17 +317,17 @@ register(
 )
 ```
 
-- [ ] **Step 11: Run test to verify it passes**
+- [x] **Step 11: Run test to verify it passes**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_category_a_tools.py -v`
 Expected: PASS (2 passed)
 
-- [ ] **Step 12: Run the full existing test suite to check nothing else broke**
+- [x] **Step 12: Run the full existing test suite to check nothing else broke**
 
 Run: `./venv/Scripts/python.exe -m pytest -v`
 Expected: all tests PASS (registering 10 new tools must not affect existing routes/tests — `register()` raises loudly on a duplicate `feature_type`, so a collision would show up as a startup/import error here, not a silent bug)
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add app/tools/product_photoshoot.py app/tools/background_swap.py app/tools/mockup_studio.py app/tools/flat_lay_angles.py app/tools/magic_erase.py app/tools/inpaint.py app/tools/relight_shadows.py app/tools/upscale_4k.py app/tools/resize_outpaint.py app/tools/product_motion.py
@@ -349,12 +349,12 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Create: `alembic/versions/<new-revision-id>_seed_category_a_tool_costs.py`
 
-- [ ] **Step 1: Generate a revision file**
+- [x] **Step 1: Generate a revision file**
 
 Run: `./venv/Scripts/python.exe -m alembic revision -m "seed category a tool costs"`
 Expected: prints the new file path in `alembic/versions/`, `down_revision` auto-set to the current head (`3adad199e5b6`).
 
-- [ ] **Step 2: Replace the generated file's contents**
+- [x] **Step 2: Replace the generated file's contents**
 
 Open the generated file and replace its body with (keep its auto-generated
 `revision`/`down_revision` values at the top — do not overwrite those):
@@ -424,17 +424,17 @@ def downgrade() -> None:
         conn.execute(sa.text("DELETE FROM tools WHERE feature_type = :ft"), {"ft": feature_type})
 ```
 
-- [ ] **Step 3: Apply the migration to the local dev DB**
+- [x] **Step 3: Apply the migration to the local dev DB**
 
 Run: `./venv/Scripts/python.exe -m alembic upgrade head`
 Expected: prints `Running upgrade 3adad199e5b6 -> <new-id>, seed category a tool costs`
 
-- [ ] **Step 4: Verify the seeded rows by hand**
+- [x] **Step 4: Verify the seeded rows by hand**
 
 Run: `./venv/Scripts/python.exe -c "from app.core.db import SessionLocal; from app.models.tool import Tool; db = SessionLocal(); rows = db.query(Tool).filter(Tool.feature_type.in_(['product_motion','magic_erase'])).all(); print([(r.feature_type, r.credit_cost, r.output_media_type) for r in rows])"`
 Expected: `[('magic_erase', 1, 'image'), ('product_motion', 4, 'video')]` (order may vary)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add alembic/versions/
@@ -453,17 +453,17 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Start the API** (if not already running)
+- [x] **Step 1: Start the API** (if not already running)
 
 Run: `./venv/Scripts/python.exe -m uvicorn app.main:app --reload`
 Expected: starts without error; console shows no `[tools] sync_tools_to_db failed` line.
 
-- [ ] **Step 2: Confirm all 10 tools are discoverable**
+- [x] **Step 2: Confirm all 10 tools are discoverable**
 
 Run (in another terminal): `curl.exe http://localhost:8000/tools`
 Expected: JSON array including all 10 new `feature_type` values alongside `on_model_shots`/`ugc`, `product_motion` with `"credit_cost": 4`, the rest with `"credit_cost": 1`.
 
-- [ ] **Step 3: Stop the server**
+- [x] **Step 3: Stop the server**
 
 Ctrl+C in the terminal running uvicorn (don't leave it running — see README's note about one instance at a time).
 
