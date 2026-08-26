@@ -5,7 +5,7 @@ from app.controllers import asset_controller
 from app.core.db import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.assets import AssetListOut, AssetOut
+from app.schemas.assets import AssetListOut, AssetOut, AssetUpdate
 
 router = APIRouter(tags=["assets"])
 
@@ -42,3 +42,13 @@ def delete_asset(
     current_user: User = Depends(get_current_user),
 ):
     asset_controller.delete_asset(db, asset_id, current_user)
+
+
+@router.patch("/assets/{asset_id}", response_model=AssetOut)
+def update_asset(
+    asset_id: str,
+    payload: AssetUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return asset_controller.update_asset(db, asset_id, current_user, is_saved_product=payload.is_saved_product)

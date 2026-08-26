@@ -11,6 +11,7 @@ class AssetOut(BaseModel):
     media_type: MediaType
     storage_key: str
     url: str
+    is_saved_product: bool
 
     class Config:
         from_attributes = True

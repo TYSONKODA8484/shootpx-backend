@@ -94,3 +94,18 @@ def delete_asset(db: Session, asset_id: str, current_user: User) -> None:
     # they are, on purpose — no cascade. A job stays queryable audit history
     # even after its output asset is gone; the frontend just handles a
     # 404'd image URL. See BACKEND-NEEDS.md's B1 section for the reasoning.
+
+
+def update_asset(db: Session, asset_id: str, current_user: User, is_saved_product: bool) -> Asset:
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+
+    membership = get_membership(db, asset.team_id, current_user.id)
+    if not compute_permissions(membership.role).can_upload_assets:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to edit assets on this team")
+
+    asset.is_saved_product = is_saved_product
+    db.commit()
+    db.refresh(asset)
+    return asset
