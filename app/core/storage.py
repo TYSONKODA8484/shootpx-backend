@@ -18,6 +18,9 @@ class Storage(ABC):
     @abstractmethod
     def url_for(self, key: str) -> str: ...
 
+    @abstractmethod
+    def delete(self, key: str) -> None: ...
+
 
 class LocalStorage(Storage):
     """Writes to a folder on disk; main.py mounts that folder at /files so
@@ -35,6 +38,13 @@ class LocalStorage(Storage):
 
     def url_for(self, key: str) -> str:
         return f"{self.base_url}/{key}"
+
+    def delete(self, key: str) -> None:
+        path = self.root_dir / key
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass  # already gone — deleting a missing file isn't an error here
 
 
 # The one line every caller goes through. Swap this for an R2/S3-backed
