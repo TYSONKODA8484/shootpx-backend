@@ -18,6 +18,10 @@ class CreditReason(str, enum.Enum):
     # credit_allowance), never more than what's actually left, so top-up
     # ("lifetime") credits bought separately are never touched by this.
     # See billing_controller.cancel_subscription / BOOK.md Chapter 17.
+    export_spend = "export_spend"  # POST /assets/{id}/export — 1 credit
+    # per requested preset, charged once for the whole call. Pure
+    # image-processing, no AI provider involved, kept as its own reason so
+    # it's distinguishable from generation_spend in the ledger/activity feed.
 
 
 class TeamCreditBalance(Base):

@@ -14,6 +14,9 @@ class AssetKind(str, enum.Enum):
     imported = "imported"  # came from a ProductImport (product_imports.py),
     # not uploaded by a user or produced by a GenerationJob — a distinct
     # provenance worth keeping separate even though the row shape is the same.
+    exported = "exported"  # produced by POST /assets/{id}/export (B5) — a
+    # Pillow-resized/reformatted derivative of another asset, not an AI
+    # generation output. source_asset_id (below) says which asset it's from.
 
 
 class MediaType(str, enum.Enum):
@@ -49,4 +52,8 @@ class Asset(Base):
     # no join table, since it's a per-asset flag with no extra metadata
     # (BACKEND-NEEDS.md's B4 section). server_default so this can be added
     # as NOT NULL against a table that may already have rows.
+    source_asset_id = Column(String, ForeignKey("assets.id"), nullable=True)  # set
+    # only for kind="exported" — which asset this resize/reformat
+    # derivative came from (B5). Self-referential FK, same one-hop-lineage
+    # pointer pattern as GenerationJob.source_asset_id/output_asset_id.
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
