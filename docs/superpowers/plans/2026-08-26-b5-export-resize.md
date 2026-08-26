@@ -1,6 +1,6 @@
 # B5 — Export / Resize Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** `POST /assets/{asset_id}/export` — resize/reformat an asset into named marketplace presets (Shopify/Amazon/Etsy/Instagram/master PNG), each becoming its own new `Asset` (`kind="exported"`) linked back via `source_asset_id`.
 
@@ -16,7 +16,7 @@
 - Modify: `app/core/storage.py`
 - Test: `tests/test_storage.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_storage.py`:
 
@@ -28,12 +28,12 @@ def test_read_returns_saved_bytes(tmp_path):
     assert storage.read("team-1/thing.png") == b"hello world"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_storage.py -v -k test_read_returns_saved_bytes`
 Expected: FAIL — `AttributeError: 'LocalStorage' object has no attribute 'read'`
 
-- [ ] **Step 3: Implement `read()`**
+- [x] **Step 3: Implement `read()`**
 
 In `app/core/storage.py`, add to the `Storage` ABC (after `delete`):
 
@@ -49,12 +49,12 @@ And to `LocalStorage` (after its `delete`):
         return (self.root_dir / key).read_bytes()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_storage.py -v`
 Expected: PASS (3 passed)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/core/storage.py tests/test_storage.py
@@ -72,14 +72,14 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Create: `app/core/image_ops.py`
 - Test: `tests/test_image_ops.py`
 
-- [ ] **Step 1: Install and pin Pillow**
+- [x] **Step 1: Install and pin Pillow**
 
 Run: `./venv/Scripts/python.exe -m pip install Pillow`
 Then run: `./venv/Scripts/python.exe -m pip show Pillow` to get the installed
 version, and append a matching line to `requirements.txt`, e.g. `Pillow==11.0.0`
 (use whatever version was actually installed).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 """tests/test_image_ops.py — export_variant()'s resize/reformat/pad logic."""
@@ -143,12 +143,12 @@ def test_all_five_presets_are_defined():
     }
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_image_ops.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.core.image_ops'`
 
-- [ ] **Step 4: Implement `app/core/image_ops.py`**
+- [x] **Step 4: Implement `app/core/image_ops.py`**
 
 ```python
 """Resize + reformat an asset into a named marketplace preset. A genuinely
@@ -202,17 +202,17 @@ def export_variant(source_bytes: bytes, preset_key: str) -> tuple[bytes, str]:
     return buffer.getvalue(), _EXTENSION_FOR_FORMAT[output_format]
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_image_ops.py -v`
 Expected: PASS (6 passed)
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add requirements.txt app/core/image_ops.py tests/test_image_ops.py
@@ -230,7 +230,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Modify: `app/models/credit.py`
 - Create: migration (via autogenerate)
 
-- [ ] **Step 1: Add `exported` to `AssetKind` in `app/models/asset.py`**
+- [x] **Step 1: Add `exported` to `AssetKind` in `app/models/asset.py`**
 
 ```python
 class AssetKind(str, enum.Enum):
@@ -242,7 +242,7 @@ class AssetKind(str, enum.Enum):
     # generation output. source_asset_id (below) says which asset it's from.
 ```
 
-- [ ] **Step 2: Add `source_asset_id` to the `Asset` model**
+- [x] **Step 2: Add `source_asset_id` to the `Asset` model**
 
 Insert right after `is_saved_product = Column(...)`:
 
@@ -253,7 +253,7 @@ Insert right after `is_saved_product = Column(...)`:
     # pointer pattern as GenerationJob.source_asset_id/output_asset_id.
 ```
 
-- [ ] **Step 3: Add `export_spend` to `CreditReason` in `app/models/credit.py`**
+- [x] **Step 3: Add `export_spend` to `CreditReason` in `app/models/credit.py`**
 
 ```python
     export_spend = "export_spend"  # POST /assets/{id}/export — 1 credit
@@ -262,7 +262,7 @@ Insert right after `is_saved_product = Column(...)`:
     # it's distinguishable from generation_spend in the ledger/activity feed.
 ```
 
-- [ ] **Step 4: Autogenerate and apply the migration**
+- [x] **Step 4: Autogenerate and apply the migration**
 
 Run: `./venv/Scripts/python.exe -m alembic revision --autogenerate -m "add asset source_asset_id for exports"`
 Open the generated file and confirm it only adds `assets.source_asset_id`
@@ -270,12 +270,12 @@ Open the generated file and confirm it only adds `assets.source_asset_id`
 `is_saved_product`).
 Run: `./venv/Scripts/python.exe -m alembic upgrade head`
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/models/asset.py app/models/credit.py alembic/versions/
@@ -291,7 +291,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Create: `app/schemas/exports.py`
 
-- [ ] **Step 1: Create the schema file**
+- [x] **Step 1: Create the schema file**
 
 ```python
 from pydantic import BaseModel, Field
@@ -311,7 +311,7 @@ class ExportResponse(BaseModel):
     exports: list[ExportResultItem]
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add app/schemas/exports.py
@@ -328,7 +328,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Modify: `app/controllers/asset_controller.py`
 - Test: `tests/test_export.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """tests/test_export.py — export_asset's credit-check, preset-validation,
@@ -431,12 +431,12 @@ def test_export_asset_404s_for_a_non_member(db_session):
     assert exc_info.value.status_code == 404
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_export.py -v`
 Expected: FAIL — `AttributeError: module 'app.controllers.asset_controller' has no attribute 'export_asset'`
 
-- [ ] **Step 3: Implement `export_asset` in `app/controllers/asset_controller.py`**
+- [x] **Step 3: Implement `export_asset` in `app/controllers/asset_controller.py`**
 
 Add these imports at the top (alongside the existing ones):
 
@@ -497,17 +497,17 @@ def export_asset(db: Session, asset_id: str, current_user: User, presets: list[s
     return ExportResponse(exports=exports)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/Scripts/python.exe -m pytest tests/test_export.py -v`
 Expected: PASS (5 passed)
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/controllers/asset_controller.py tests/test_export.py
@@ -523,7 +523,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `app/routes/asset_routes.py`
 
-- [ ] **Step 1: Add the import and route**
+- [x] **Step 1: Add the import and route**
 
 Add `ExportRequest, ExportResponse` to the imports (new line, since these
 live in `app.schemas.exports`, not `app.schemas.assets`):
@@ -545,12 +545,12 @@ def export_asset(
     return asset_controller.export_asset(db, asset_id, current_user, payload.presets)
 ```
 
-- [ ] **Step 2: Run the full suite**
+- [x] **Step 2: Run the full suite**
 
 Run: `./venv/Scripts/python.exe -m pytest`
 Expected: all passing
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add app/routes/asset_routes.py
@@ -565,7 +565,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Confirm the route exists**
+- [x] **Step 1: Confirm the route exists**
 
 Run: `./venv/Scripts/python.exe -m uvicorn app.main:app --port 8123` then
 `curl.exe -s http://localhost:8123/openapi.json | ./venv/Scripts/python.exe -c "import json,sys; print(sorted(json.load(sys.stdin)['paths'].get('/assets/{asset_id}/export', {}).keys()))"`
