@@ -31,7 +31,8 @@ whenever you change the code, add to it rather than rewriting it (see its
 ## Stack
 
 Python / FastAPI · PostgreSQL · SQLAlchemy · Firebase Authentication ·
-Resend (SMTP) · local disk storage (swappable later for R2/S3)
+Resend (SMTP) · local disk storage (swappable later for R2/S3) · Pillow
+(export/resize)
 
 ## Project layout
 
@@ -39,9 +40,11 @@ Resend (SMTP) · local disk storage (swappable later for R2/S3)
 app/
   core/         config, DB connection, session-cookie signing,
                 Firebase Admin SDK, storage + AI-provider abstractions,
-                product-scrapper client
+                product-scrapper client, Pillow-based export/resize (image_ops.py)
   tools/        the feature_type registry — one file per tool (see
-                DESIGN.md's "Tool registry" section)
+                DESIGN.md's "Tool registry" section) — 12 registered today
+                (2 on the real generation pipeline's original mock loop,
+                10 more from the Category-A pass, see docs/BOOK.md Ch. 18)
   middleware/   the login gate (get_current_user), CORS setup
   models/       SQLAlchemy tables
   schemas/      Pydantic request/response shapes
@@ -161,20 +164,36 @@ are served from `localhost`.
 | `POST /teams/{id}/members` | invite someone by email (owner-only) |
 | `GET /teams/{id}/members` / `GET /teams/{id}/invites` | |
 | `POST /teams/{id}/assets` | upload a file |
+| `GET /teams/{id}/assets` | list a team's assets — filter by `kind`/`media_type`, paginated |
+| `DELETE /assets/{id}` | delete a file for real: storage + cache + DB row |
+| `PATCH /assets/{id}` | `{ is_saved_product }` — flag an asset for the Brand Kit's saved-products shortlist |
+| `POST /assets/{id}/export` | resize/reformat into named marketplace presets (Shopify/Amazon/Etsy/Instagram/master-PNG) — synchronous, 1 credit per preset |
+| `GET /assets/{id}/versions` | the edit chain that produced this asset, newest-first, reconstructed from `generation_jobs` |
+| `GET /teams/{id}/activity` | one merged, paginated feed over recent jobs/imports/credit grants |
+| `GET /templates` | the seeded template catalog — filter by `category`, search by `q` |
+| `GET` / `PUT /teams/{id}/brand-kit` | a team's palette/fonts — `GET` lazily creates an empty kit on first call |
+| `POST` / `DELETE /teams/{id}/brand-kit/marks` | upload/remove a logo variant (a mark is a real asset under the hood) |
 | `POST /generate` | run a tool on one asset: `team_id`, `feature_type`, `source_asset_id`, `input_payload` — enqueued, returns immediately |
 | `POST /generate/bulk` | run a tool on up to 100 assets at once: `team_id`, `feature_type`, `asset_ids`, `input_payload` — returns a `batch_id` + all job ids immediately |
 | `GET /jobs?ids=...` | poll one or many jobs by comma-separated id |
 | `GET /batches/{batch_id}` | poll a bulk submission's aggregate + per-job status |
 | `POST /product-imports` | scrape a product URL: `team_id`, `url` — enqueued, returns immediately |
 | `GET /product-imports/{id}` | poll status; once done, includes name/description/brand/price/theme colors + every scraped image as a real asset |
+| `GET /tools` | every active tool — 12 registered today, see `docs/BOOK.md` Chapter 18 |
 
 Full request/response shapes are in `/docs`, not duplicated here — this
 table is just so you know what exists before opening it.
 
 ## Testing
 
-There's no automated test suite yet — testing has been done by hand
-against a live database via `/docs` and the test console, verifying actual
-database state and actual file bytes, not just HTTP status codes. See
-`DESIGN.md` for the reasoning behind specific design decisions if a test
-result looks surprising.
+```bash
+./venv/Scripts/python.exe -m pytest
+```
+
+An automated suite exists under `tests/` (pytest, in-memory SQLite via
+`tests/conftest.py`'s `db_session`/`client` fixtures) — 70 tests as of this
+writing, covering every controller added in `docs/BOOK.md` Chapter 18 plus
+the pre-existing CMS suite. Anything that genuinely needs a live Postgres
+session (Alembic migrations, `core/credits.py`'s raw-SQL upserts) is still
+verified by hand against a real database — see `DESIGN.md` for the
+reasoning behind specific design decisions if a result looks surprising.
