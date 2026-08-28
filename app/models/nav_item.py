@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import Boolean, Column, DateTime, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 
 
 class NavItem(Base):
@@ -19,5 +18,5 @@ class NavItem(Base):
     label = Column(String, nullable=False)  # display-only, for the CMS's
     # own list view; the frontend keeps its own hardcoded label
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

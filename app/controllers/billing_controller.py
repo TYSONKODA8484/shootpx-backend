@@ -4,14 +4,15 @@ this is the implementation of docs/superpowers/specs/2026-08-19-billing-
 credits-and-payments-design.md.
 """
 
-from datetime import datetime, timedelta
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.credits import add_one_month, apply_credit_delta, get_balance
+from app.core.credits import add_refill_interval, apply_credit_delta, get_balance, period_length
+from app.core.geo_pricing import normalize_region
 from app.core.payment_provider import PaymentProviderError, payment_provider
 from app.core.permissions import compute_permissions, get_membership
+from app.core.time import utc_now
+from app.models.billing_mode import BillingMode
 from app.models.credit import CreditPack, CreditReason, CreditTransaction
 from app.models.payment import Payment, PaymentKind, PaymentStatus
 from app.models.plan import BillingCycle, Plan
@@ -20,12 +21,40 @@ from app.models.team import Team, new_id
 from app.models.user import User
 
 
-def list_plans(db: Session) -> list[Plan]:
-    return db.query(Plan).filter(Plan.is_active == True).all()  # noqa: E712
+def get_billing_config(db: Session) -> dict:
+    """Backs GET /billing/config — see BillingMode's docstring. Defaults an
+    UNSEEDED mode to enabled (True) rather than hiding it: a row missing
+    entirely (migration not yet run, or a fresh dev DB) should never look
+    like a deliberate admin decision to turn something off — only an
+    explicit is_active=false row does that."""
+    rows = {m.key: m.is_active for m in db.query(BillingMode).all()}
+    return {
+        "subscriptions_enabled": rows.get("subscriptions", True),
+        "credits_enabled": rows.get("credits", True),
+    }
 
 
-def list_credit_packs(db: Session) -> list[CreditPack]:
-    return db.query(CreditPack).filter(CreditPack.is_active == True).all()  # noqa: E712
+def list_plans(db: Session, region: str | None = None) -> list[Plan]:
+    """With no region given, returns every active plan (Free plus every
+    region's paid variants) — the pre-geo-pricing behavior, still used by
+    anything that doesn't care about region (e.g. looking up a specific
+    plan_id later). Pass a region to get what a signup should actually be
+    OFFERED: the Free plan (region-less, shown everywhere) plus only that
+    region's paid variants, never a mix of currencies in one list."""
+    query = db.query(Plan).filter(Plan.is_active == True)  # noqa: E712
+    if region is None:
+        return query.all()
+    resolved = normalize_region(region)
+    return query.filter((Plan.region == resolved) | (Plan.region.is_(None))).all()
+
+
+def list_credit_packs(db: Session, region: str | None = None) -> list[CreditPack]:
+    """Same region-filtering shape as list_plans — see that docstring."""
+    query = db.query(CreditPack).filter(CreditPack.is_active == True)  # noqa: E712
+    if region is None:
+        return query.all()
+    resolved = normalize_region(region)
+    return query.filter((CreditPack.region == resolved) | (CreditPack.region.is_(None))).all()
 
 
 def get_free_plan(db: Session) -> Plan:
@@ -47,7 +76,7 @@ def assign_free_plan(db: Session, team: Team) -> TeamSubscription:
         team_id=team.id,
         plan_id=plan.id,
         status=SubscriptionStatus.free.value,
-        next_credit_refill_at=add_one_month(datetime.utcnow()),
+        next_credit_refill_at=add_refill_interval(utc_now(), plan.billing_cycle),
     )
     db.add(sub)
     db.flush()
@@ -86,12 +115,28 @@ def get_billing_status(db: Session, current_user: User, team_id: str) -> dict:
     }
 
 
+def _find_plan(db: Session, plan_id: str) -> Plan | None:
+    """plan_id may be EITHER our internal plans.id (a UUID) OR a paid
+    plan's provider_plan_id (Razorpay's own id, e.g. "plan_TV6uz...") —
+    the frontend is meant to treat provider_plan_id as a paid plan's real
+    identifier (see Plan's docstring), so every plan-accepting endpoint
+    needs to resolve either form rather than force callers to first look
+    up our internal id. Checked by primary key first since that's an
+    indexed point lookup; provider_plan_id has no unique constraint of its
+    own today but is expected to be unique in practice (one Razorpay plan
+    backs at most one row)."""
+    plan = db.get(Plan, plan_id)
+    if plan is not None:
+        return plan
+    return db.query(Plan).filter(Plan.provider_plan_id == plan_id).first()
+
+
 def create_subscription(db: Session, current_user: User, team_id: str, plan_id: str) -> dict:
     membership = get_membership(db, team_id, current_user.id)
     if not compute_permissions(membership.role).can_manage_team:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the team owner can manage billing")
 
-    plan = db.get(Plan, plan_id)
+    plan = _find_plan(db, plan_id)
     if plan is None or not plan.is_active:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown or inactive plan")
 
@@ -120,7 +165,7 @@ def create_subscription(db: Session, current_user: User, team_id: str, plan_id: 
             # activation webhook confirms it — "past_due" reused rather
             # than adding a new enum value purely for "awaiting first
             # payment"; both mean "not currently granting access".
-            next_credit_refill_at=add_one_month(datetime.utcnow()),
+            next_credit_refill_at=add_refill_interval(utc_now(), plan.billing_cycle),
         )
         db.add(sub)
     else:
@@ -195,7 +240,10 @@ def cancel_subscription(db: Session, current_user: User, team_id: str) -> dict:
 
 
 def create_topup_order(db: Session, current_user: User, team_id: str, credit_pack_id: str) -> dict:
-    get_membership(db, team_id, current_user.id)
+    membership = get_membership(db, team_id, current_user.id)
+    if not compute_permissions(membership.role).can_manage_team:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the team owner can buy credits")
+
     pack = db.get(CreditPack, credit_pack_id)
     if pack is None or not pack.is_active:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown or inactive credit pack")
@@ -237,9 +285,10 @@ def _credit_subscription_charge(
     if sub is None:
         return {"status": "unknown_subscription"}
 
+    plan = db.get(Plan, sub.plan_id)
     is_first_charge = sub.current_period_end is None
     sub.status = SubscriptionStatus.active.value
-    sub.current_period_end = datetime.utcnow() + timedelta(days=30)
+    sub.current_period_end = utc_now() + period_length(plan.billing_cycle if plan else "monthly")
 
     if provider_payment_id:
         db.add(Payment(
@@ -249,14 +298,13 @@ def _credit_subscription_charge(
             status=PaymentStatus.captured.value, kind=PaymentKind.subscription_charge.value,
         ))
 
-    if is_first_charge:
+    if is_first_charge and plan is not None:
         # Synchronous grant for the FIRST charge only — every subsequent
-        # cycle (monthly or yearly) is granted by the refill cron instead,
-        # never by this path, so the two mechanisms never double-grant the
-        # same month.
-        plan = db.get(Plan, sub.plan_id)
+        # cycle (weekly/monthly/yearly) is granted by the refill cron
+        # instead, never by this path, so the two mechanisms never
+        # double-grant the same period.
         apply_credit_delta(db, sub.team_id, plan.credit_allowance, reason=CreditReason.plan_grant.value, reference_id=provider_payment_id)
-        sub.next_credit_refill_at = add_one_month(datetime.utcnow())
+        sub.next_credit_refill_at = add_refill_interval(utc_now(), plan.billing_cycle)
 
     db.commit()
     return {"status": "processed"}
@@ -311,32 +359,41 @@ def confirm_payment(db: Session, current_user: User, payload: dict) -> dict:
     if not payment_id or not signature or (not order_id and not subscription_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing required payment confirmation fields")
 
-    if subscription_id:
-        if not payment_provider.verify_subscription_payment(subscription_id, payment_id, signature):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
-        sub_entity = payment_provider.fetch_subscription(subscription_id)
-        get_membership(db, sub_entity.get("notes", {}).get("team_id", ""), current_user.id)
-        # A subscription entity carries NO amount/currency field at all —
-        # the real charged amount only exists on the payment itself. The
-        # earlier version guessed at a `plan.item.amount` path that
-        # doesn't exist in Razorpay's actual response shape, silently
-        # recording every subscription payment's amount as 0 — harmless to
-        # crediting (which only ever used credit_allowance, not this
-        # amount), but wrong for `payments` as an audit/reconciliation
-        # record, which is the entire point of that table.
-        payment_entity = payment_provider.fetch_payment(payment_id)
-        return _credit_subscription_charge(
-            db, "razorpay", subscription_id, payment_id,
-            amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
-        )
+    try:
+        if subscription_id:
+            if not payment_provider.verify_subscription_payment(subscription_id, payment_id, signature):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
+            sub_entity = payment_provider.fetch_subscription(subscription_id)
+            get_membership(db, sub_entity.get("notes", {}).get("team_id", ""), current_user.id)
+            # A subscription entity carries NO amount/currency field at all —
+            # the real charged amount only exists on the payment itself. The
+            # earlier version guessed at a `plan.item.amount` path that
+            # doesn't exist in Razorpay's actual response shape, silently
+            # recording every subscription payment's amount as 0 — harmless to
+            # crediting (which only ever used credit_allowance, not this
+            # amount), but wrong for `payments` as an audit/reconciliation
+            # record, which is the entire point of that table.
+            payment_entity = payment_provider.fetch_payment(payment_id)
+            return _credit_subscription_charge(
+                db, "razorpay", subscription_id, payment_id,
+                amount=payment_entity.get("amount", 0), currency=payment_entity.get("currency", "INR"),
+            )
 
-    if not payment_provider.verify_order_payment(order_id, payment_id, signature):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
-    order_entity = payment_provider.fetch_order(order_id)
-    notes = dict(order_entity.get("notes") or {})
-    notes["order_id"] = order_id
-    get_membership(db, notes.get("team_id", ""), current_user.id)
-    return _credit_topup(db, "razorpay", payment_id, notes, amount=order_entity.get("amount", 0), currency=order_entity.get("currency", "INR"))
+        if not payment_provider.verify_order_payment(order_id, payment_id, signature):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature verification failed")
+        order_entity = payment_provider.fetch_order(order_id)
+        notes = dict(order_entity.get("notes") or {})
+        notes["order_id"] = order_id
+        get_membership(db, notes.get("team_id", ""), current_user.id)
+        return _credit_topup(db, "razorpay", payment_id, notes, amount=order_entity.get("amount", 0), currency=order_entity.get("currency", "INR"))
+    except PaymentProviderError as exc:
+        # A nonexistent/malformed order_id or subscription_id reaching
+        # Razorpay's own fetch — e.g. a stale value, a typo, or someone
+        # probing this endpoint with made-up ids. Without this, that would
+        # surface as an unhandled 500 (see payment_provider.py's
+        # fetch_order/fetch_subscription/fetch_payment) instead of a clean
+        # 4xx the frontend can actually show a message for.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Could not verify payment: {exc}") from exc
 
 
 def process_webhook_event(db: Session, provider: str, event: str, payload: dict) -> dict:

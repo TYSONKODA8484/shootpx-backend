@@ -52,9 +52,14 @@ class InviteOut(BaseModel):
     email: str
     role: TeamRole
     created_at: str
+    expires_at: str
 
 
 class AddMemberResult(BaseModel):
-    status: str  # "added" | "invited"
-    member: MemberOut | None = None
-    invite: InviteOut | None = None
+    """Always "invited" now — add_member never adds someone immediately,
+    it always creates a pending invite and emails it (see
+    team_controller.add_member's docstring). status is kept as a field
+    (rather than dropped) so an older frontend build checking
+    result.status === "invited" doesn't need to change to keep working."""
+    status: str = "invited"
+    invite: InviteOut

@@ -12,6 +12,7 @@ from typing import Literal
 
 from app.models.ai_model import AIModel
 from app.models.asset import Asset
+from app.models.billing_mode import BillingMode
 from app.models.credit import CreditPack, CreditTransaction, TeamCreditBalance
 from app.models.generation_job import GenerationJob
 from app.models.invite import TeamInvite
@@ -90,7 +91,18 @@ register(EntityConfig(
     label="Teams",
     model=Team,
     search_fields=["name"],
-    fields=[_ID, FieldConfig("name", "string"), _CREATED_AT],
+    fields=[
+        _ID,
+        FieldConfig("name", "string"),
+        FieldConfig("is_active", "bool", help_text=(
+            "Unchecked = this team was deleted by its owner (DELETE "
+            "/teams/{id}) — a soft delete, all of its assets/jobs/payments "
+            "stay in the DB untouched. Re-checking this here restores the "
+            "team's access; it will reappear in GET /teams for its members."
+        )),
+        FieldConfig("deleted_at", "datetime"),
+        _CREATED_AT,
+    ],
 ))
 
 register(EntityConfig(
@@ -118,6 +130,7 @@ register(EntityConfig(
         FieldConfig("role", "enum", enum_values=["owner", "editor"]),
         FieldConfig("invited_by", "fk", fk_entity="users"),
         _CREATED_AT,
+        FieldConfig("expires_at", "datetime", help_text="48 hours after creation — accept_invite refuses a click past this point regardless of the link itself still working."),
         FieldConfig("accepted_at", "datetime"),
     ],
 ))
@@ -229,7 +242,14 @@ register(EntityConfig(
         FieldConfig("is_active", "bool", help_text=(
             "Unchecked = this tool disappears from GET /tools and the Studio "
             "app immediately — no restart, no cache to clear. Checked = it "
-            "shows up wherever the frontend lists tools."
+            "shows up wherever the frontend lists tools (subject to the "
+            "Status field below)."
+        )),
+        FieldConfig("status", "enum", enum_values=["live", "coming_soon"], help_text=(
+            "'live' = shown normally and callable via /generate. "
+            "'coming_soon' = still shown in GET /tools (frontend renders a "
+            "SOON badge) but /generate and /product-imports reject it, same "
+            "as if it were disabled. Only matters while Active is checked."
         )),
         _CREATED_AT,
         _UPDATED_AT,
@@ -358,6 +378,31 @@ register(EntityConfig(
             "Unchecked = this template disappears from GET /templates and "
             "the Templates page immediately — no restart, no cache to clear."
         )),
+    ],
+))
+
+register(EntityConfig(
+    name="billing-modes",
+    label="Billing Modes",
+    model=BillingMode,
+    pk_field="key",
+    allow_create=False,  # the 2 modes are fixed (subscriptions/credits) —
+    # nothing here creates a new billing mode, only toggles the 2 existing ones
+    allow_delete=False,
+    search_fields=["label"],
+    fields=[
+        FieldConfig("key", "string", editable=False),
+        FieldConfig("label", "string", editable=False),
+        FieldConfig("is_active", "bool", help_text=(
+            "Unchecked = this whole pricing-page tab (Subscription or "
+            "Credits) disappears from GET /billing/config immediately — "
+            "no restart, no cache to clear. Does NOT touch teams already "
+            "on a plan of this mode, and does not block the underlying "
+            "subscribe/topup endpoints on its own — it only tells a "
+            "well-behaved frontend which tab(s) to show."
+        )),
+        _CREATED_AT,
+        _UPDATED_AT,
     ],
 ))
 

@@ -1,9 +1,9 @@
 import enum
-from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -32,5 +32,5 @@ class TeamSubscription(Base):
     status = Column(String, nullable=False, default=SubscriptionStatus.free.value)
     current_period_end = Column(DateTime, nullable=True)  # null for Free
     next_credit_refill_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

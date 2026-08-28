@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, String
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
+from app.core.time import utc_now
 
 
 class User(Base):
@@ -17,6 +16,6 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     name = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     memberships = relationship("TeamMembership", back_populates="user", cascade="all, delete-orphan")

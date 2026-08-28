@@ -1,9 +1,9 @@
 import enum
-from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -66,5 +66,5 @@ class ProductImport(Base):
     # recomputed at completion" principle as GenerationJob.credit_cost —
     # see BOOK.md Chapter 17.
     error = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
     completed_at = Column(DateTime, nullable=True)

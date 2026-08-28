@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, JSON, String
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -19,8 +18,8 @@ class BrandKit(Base):
     palette = Column(JSON, nullable=False, default=list)  # list[str] of hex colors
     heading_font = Column(String, nullable=True)
     body_font = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     marks = relationship("BrandMark", back_populates="brand_kit", cascade="all, delete-orphan")
 
@@ -38,7 +37,7 @@ class BrandMark(Base):
     brand_kit_id = Column(String, ForeignKey("brand_kits.id"), nullable=False)
     asset_id = Column(String, ForeignKey("assets.id"), nullable=False)
     variant = Column(String, nullable=False, default="default")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     brand_kit = relationship("BrandKit", back_populates="marks")
     asset = relationship("Asset")

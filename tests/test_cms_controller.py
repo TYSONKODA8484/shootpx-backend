@@ -1,10 +1,9 @@
-from datetime import datetime
-
 import pytest
 from fastapi import HTTPException
 
 from app.controllers import cms_controller
 from app.core.cms_registry import ENTITIES
+from app.core.time import utc_now
 
 PLANS = ENTITIES["plans"]
 
@@ -55,7 +54,7 @@ def test_delete_blocked_by_foreign_key(db_session):
     db_session.commit()
     db_session.add(TeamSubscription(
         id="sub-1", team_id="team-1", plan_id=created["id"],
-        status="active", next_credit_refill_at=datetime.utcnow(),
+        status="active", next_credit_refill_at=utc_now(),
     ))
     db_session.commit()
 

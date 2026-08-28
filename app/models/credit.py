@@ -1,9 +1,9 @@
 import enum
-from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -37,7 +37,7 @@ class TeamCreditBalance(Base):
 
     team_id = Column(String, ForeignKey("teams.id"), primary_key=True)
     balance = Column(Integer, nullable=False, default=0)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
 
 class CreditTransaction(Base):
@@ -54,14 +54,23 @@ class CreditTransaction(Base):
     reason = Column(String, nullable=False)  # CreditReason value
     reference_id = Column(String, nullable=True)  # job id / payment id, depending on reason
     balance_after = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
 
 class CreditPack(Base):
     """A purchasable one-off top-up amount. No provider-side pre-
     registration needed — a one-time Razorpay Order is created with an
     arbitrary amount directly, this is just our own catalog of what's
-    offered."""
+    offered.
+
+    region/pack_group mirror Plan's geo-pricing fields (see Plan's
+    docstring) — not populated with any non-India rows yet, same reason as
+    Plan (personal Razorpay accounts can't enable International Payments).
+
+    features/badge mirror Plan's marketing-copy fields — the pricing
+    page's bullet list and ribbon label (e.g. "MOST POPULAR") live here,
+    not hardcoded in the frontend.
+    """
 
     __tablename__ = "credit_packs"
 
@@ -70,4 +79,8 @@ class CreditPack(Base):
     credit_amount = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)  # smallest currency unit
     currency = Column(String, nullable=False, default="INR")
+    region = Column(String, nullable=True)  # e.g. "IN", "US"; null if priced the same everywhere
+    pack_group = Column(String, nullable=True)  # ties regional variants together, e.g. "small-topup"
     is_active = Column(Boolean, nullable=False, default=True)
+    badge = Column(String, nullable=True)  # e.g. "MOST POPULAR"; null if none
+    features = Column(JSON, nullable=True)  # ordered list of bullet strings for the pricing page

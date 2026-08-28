@@ -1,9 +1,11 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class TemplateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str
     category: str
@@ -11,10 +13,6 @@ class TemplateOut(BaseModel):
     credit_cost: int
     preview_asset_url: str | None
     input_payload_preset: dict[str, Any]
-
-    class Config:
-        from_attributes = True
-
 
 class TemplateListOut(BaseModel):
     total: int

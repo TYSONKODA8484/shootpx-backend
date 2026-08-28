@@ -192,9 +192,29 @@ table is just so you know what exists before opening it.
 ```
 
 An automated suite exists under `tests/` (pytest, in-memory SQLite via
-`tests/conftest.py`'s `db_session`/`client` fixtures) — 70 tests as of this
+`tests/conftest.py`'s `db_session`/`client` fixtures) — 72 tests as of this
 writing, covering every controller added in `docs/BOOK.md` Chapter 18 plus
 the pre-existing CMS suite. Anything that genuinely needs a live Postgres
 session (Alembic migrations, `core/credits.py`'s raw-SQL upserts) is still
 verified by hand against a real database — see `DESIGN.md` for the
 reasoning behind specific design decisions if a result looks surprising.
+
+Runs clean (0 warnings) as of `docs/BOOK.md`
+[Timeline, Era 13](docs/BOOK.md#era-13--pre-production-health-check-then-fixing-everything-it-found-2026-08-27-uncommitted) —
+every schema's Pydantic v1-style `class Config:` was migrated to
+`ConfigDict`, and every `datetime.utcnow()` call now goes through
+`app/core/time.py::utc_now()`.
+
+If the app fails to start with a Pydantic validation error on `DEBUG`,
+check for a machine-level `DEBUG` environment variable shadowing `.env` —
+`app/core/config.py` tolerates `DEBUG=release`/`prod`/`production` (→
+`False`) and `dev`/`development` (→ `True`) on top of the usual
+`true`/`false` strings, but not arbitrary other values.
+
+### CMS
+
+`cms/` is a small internal Next.js admin panel (see
+[`cms/README.md`](cms/README.md) if present, and `docs/BOOK.md` for the
+backend-side `/cms/*` routes it talks to). On **Next 16.3.3** as of Era 13
+— `npm run lint` (flat `eslint.config.mjs`, `eslint@9.39.5`) and `npm audit`
+(0 vulnerabilities) are both clean; `npm run build` succeeds.
