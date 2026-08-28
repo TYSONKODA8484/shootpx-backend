@@ -12,17 +12,28 @@ export default function EntityListPage() {
   const [data, setData] = useState<PaginatedResponse | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api.entities().then((all) => {
-      setConfig(all.find((e) => e.name === params.entity) ?? null);
-    });
-    api
-      .list(params.entity, page, search)
-      .then(setData)
-      .catch((err) => {
+    setError(null);
+    async function run() {
+      try {
+        const all = await api.entities();
+        const found = all.find((e) => e.name === params.entity) ?? null;
+        if (!found) {
+          setConfig(null);
+          setData(null);
+          setError(`Unknown entity: ${params.entity}`);
+          return;
+        }
+        setConfig(found);
+        setData(await api.list(params.entity, page, search));
+      } catch (err) {
         if (err instanceof ApiError && err.status === 401) router.push("/login");
-      });
+        else setError(err instanceof ApiError ? err.message : "Failed to load entity rows");
+      }
+    }
+    run();
   }, [params.entity, page, search, router]);
 
   useEffect(() => {
@@ -33,6 +44,7 @@ export default function EntityListPage() {
     load();
   }, [load]);
 
+  if (error) return <p className="text-red-400">{error}</p>;
   if (!config || !data) return <p className="text-slate-400">Loading...</p>;
 
   const columns = config.fields.map((f) => f.name);

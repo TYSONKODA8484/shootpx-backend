@@ -1,11 +1,10 @@
-from datetime import datetime
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.credits import get_balance
 from app.core.permissions import compute_permissions, get_membership
 from app.core.queue import enqueue_product_import
+from app.core.time import utc_now
 from app.models.asset import Asset
 from app.models.product_import import PRODUCT_IMPORT_FEATURE_TYPE, ProductImport, ProductImportStatus
 from app.models.tool import Tool
@@ -36,14 +35,16 @@ async def start_product_import(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to import assets on this team"
         )
 
-    # Cost and the kill-switch both come from the SAME tools table
-    # generation tools use — DB-editable, no redeploy needed, and this is
-    # why "product_import" is a real row there (GET /tools lists it
-    # alongside on_model_shots/ugc) rather than a hardcoded settings
-    # constant. See BOOK.md Chapter 14/17.
+    # Cost, the kill-switch, and the coming_soon check all come from the
+    # SAME tools table generation tools use — DB-editable, no redeploy
+    # needed, and this is why "product_import" is a real row there (GET
+    # /tools lists it alongside on_model_shots/ugc) rather than a
+    # hardcoded settings constant.
     tool_row = db.get(Tool, PRODUCT_IMPORT_FEATURE_TYPE)
     if tool_row is not None and not tool_row.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product import is currently disabled")
+    if tool_row is not None and tool_row.status != "live":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product import is coming soon and not yet available")
     cost = tool_row.credit_cost if tool_row is not None else 5  # defensive fallback only
 
     available = get_balance(db, payload.team_id) - _held_import_credits(db, payload.team_id)
@@ -72,7 +73,7 @@ async def start_product_import(
     except Exception as exc:
         imp.status = ProductImportStatus.failed.value
         imp.error = f"Failed to enqueue: {exc}"
-        imp.completed_at = datetime.utcnow()
+        imp.completed_at = utc_now()
         db.commit()
         raise
 

@@ -1,9 +1,9 @@
 import enum
-from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -38,4 +38,4 @@ class Payment(Base):
     currency = Column(String, nullable=False, default="INR")
     status = Column(String, nullable=False)  # PaymentStatus value
     kind = Column(String, nullable=False)  # PaymentKind value
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)

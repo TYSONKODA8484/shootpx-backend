@@ -8,6 +8,7 @@ from app.core.storage import storage  # noqa: F401  (import creates STORAGE_ROOT
 from app.middleware.setup import register_middleware
 from app.models import ai_model as ai_model_models  # noqa: F401  (registers AIModel on Base)
 from app.models import asset as asset_models  # noqa: F401  (registers Asset on Base)
+from app.models import billing_mode as billing_mode_models  # noqa: F401  (registers BillingMode on Base)
 from app.models import brand_kit as brand_kit_models  # noqa: F401  (registers BrandKit/BrandMark on Base)
 from app.models import credit as credit_models  # noqa: F401  (registers TeamCreditBalance/CreditTransaction/CreditPack on Base)
 from app.models import generation_job as generation_job_models  # noqa: F401  (registers GenerationJob on Base)

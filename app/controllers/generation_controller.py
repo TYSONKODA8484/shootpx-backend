@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -8,6 +6,7 @@ from app.core.credits import get_balance
 from app.core.permissions import compute_permissions, get_membership
 from app.core.pricing import resolve_credit_cost
 from app.core.queue import enqueue_generation_job
+from app.core.time import utc_now
 from app.models.asset import Asset
 from app.models.generation_job import GenerationJob, JobStatus
 from app.models.team import TeamMembership, new_id
@@ -26,14 +25,20 @@ from app.schemas.generation import (
 def _check_tool_active(db: Session, feature_type: str) -> None:
     """schemas/generation.py already rejects an unknown feature_type (422,
     checked against the CODE registry). This is a separate, DB-side check —
-    is a genuinely real tool currently switched off (Tool.is_active) — so a
-    tool can be disabled without a redeploy. Fails OPEN if the row is
+    is a genuinely real tool currently switched off (Tool.is_active) OR
+    still marked coming_soon (Tool.status — advertised on GET /tools with a
+    SOON badge, but not actually callable yet, see Tool's docstring) — so
+    either can be toggled without a redeploy. Fails OPEN if the row is
     somehow missing (defensive — code-registry existence is still the hard
     requirement enforced at the schema layer), fails CLOSED only on an
-    explicit is_active=False."""
+    explicit is_active=False or status != 'live'."""
     tool_row = db.get(Tool, feature_type)
-    if tool_row is not None and not tool_row.is_active:
+    if tool_row is None:
+        return
+    if not tool_row.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Tool {feature_type!r} is currently disabled")
+    if tool_row.status != "live":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Tool {feature_type!r} is coming soon and not yet available")
 
 
 def _held_credits(db: Session, team_id: str) -> int:
@@ -111,7 +116,7 @@ async def run_generation(db: Session, current_user: User, payload: GenerateReque
     except Exception as exc:
         job.status = JobStatus.failed.value
         job.error = f"Failed to enqueue: {exc}"
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utc_now()
         db.commit()
         raise
 
@@ -182,7 +187,7 @@ async def run_generation_bulk(
         except Exception as exc:
             job.status = JobStatus.failed.value
             job.error = f"Failed to enqueue: {exc}"
-            job.completed_at = datetime.utcnow()
+            job.completed_at = utc_now()
             db.commit()
 
     return BulkGenerateResponse(batch_id=batch_id, job_ids=job_ids)

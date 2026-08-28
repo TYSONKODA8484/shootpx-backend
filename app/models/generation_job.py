@@ -1,9 +1,9 @@
 import enum
-from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -53,5 +53,5 @@ class GenerationJob(Base):
     # can never retroactively affect a job already running, and every
     # credit_transactions row has a permanent record of what THIS job cost.
     error = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
     completed_at = Column(DateTime, nullable=True)

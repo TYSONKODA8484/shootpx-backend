@@ -191,13 +191,27 @@ class RazorpayProvider(PaymentProvider):
             return False
 
     def fetch_order(self, order_id: str) -> dict[str, Any]:
-        return self._client.order.fetch(order_id)
+        try:
+            return self._client.order.fetch(order_id)
+        except razorpay.errors.BadRequestError as exc:
+            # A nonexistent/malformed order_id — e.g. a stale or tampered
+            # value in the client's confirm-payment call. Same wrapping as
+            # cancel_subscription above, so billing_controller.confirm_payment
+            # gets a clean 4xx (PaymentProviderError) instead of an
+            # unhandled Razorpay SDK exception surfacing as a 500.
+            raise PaymentProviderError(str(exc)) from exc
 
     def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:
-        return self._client.subscription.fetch(subscription_id)
+        try:
+            return self._client.subscription.fetch(subscription_id)
+        except razorpay.errors.BadRequestError as exc:
+            raise PaymentProviderError(str(exc)) from exc
 
     def fetch_payment(self, payment_id: str) -> dict[str, Any]:
-        return self._client.payment.fetch(payment_id)
+        try:
+            return self._client.payment.fetch(payment_id)
+        except razorpay.errors.BadRequestError as exc:
+            raise PaymentProviderError(str(exc)) from exc
 
 
 # The one line every caller goes through. Swap for a different provider

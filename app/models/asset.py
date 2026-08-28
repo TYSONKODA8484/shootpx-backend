@@ -1,10 +1,10 @@
 import enum
-from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
 
 from app.core.db import Base
+from app.core.time import utc_now
 from app.models.team import new_id
 
 
@@ -56,4 +56,4 @@ class Asset(Base):
     # only for kind="exported" — which asset this resize/reformat
     # derivative came from (B5). Self-referential FK, same one-hop-lineage
     # pointer pattern as GenerationJob.source_asset_id/output_asset_id.
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)

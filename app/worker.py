@@ -56,7 +56,6 @@ actually stalls concurrently-running jobs" tradeoff as storage.save() and
 every DB call in this file already accept.
 """
 
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -69,10 +68,11 @@ from sqlalchemy.orm import Session
 from app.core import product_scraper_client
 from app.core.ai_provider import GenerationFailed, GenerationHandle, GenerationPending
 from app.core.config import settings
-from app.core.credits import add_one_month, apply_credit_delta
+from app.core.credits import add_refill_interval, apply_credit_delta
 from app.core.db import SessionLocal
 from app.core.product_scraper_client import ScrapeHandle, ScrapePending
 from app.core.storage import storage
+from app.core.time import utc_now
 from app.tools import get_tool
 from app.models.asset import Asset, AssetKind, MediaType
 from app.models.credit import CreditReason
@@ -153,10 +153,10 @@ async def _process_job(job_id: str) -> bool:
         if job.external_job_id is None:
             return _submit(db, job)
 
-        if (datetime.utcnow() - job.created_at).total_seconds() > settings.GENERATION_TIMEOUT_SECONDS:
+        if (utc_now() - job.created_at).total_seconds() > settings.GENERATION_TIMEOUT_SECONDS:
             job.status = JobStatus.failed.value
             job.error = "Generation timed out"
-            job.completed_at = datetime.utcnow()
+            job.completed_at = utc_now()
             db.commit()
             return False
 
@@ -174,7 +174,7 @@ def _submit(db: Session, job: GenerationJob) -> bool:
         # worker for a feature_type that's since been removed from it.
         job.status = JobStatus.failed.value
         job.error = f"Unknown feature_type: {job.feature_type!r}"
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utc_now()
         db.commit()
         return False
 
@@ -188,7 +188,7 @@ def _submit(db: Session, job: GenerationJob) -> bool:
     except Exception as exc:
         job.status = JobStatus.failed.value
         job.error = str(exc)
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utc_now()
         db.commit()
         return False
 
@@ -203,7 +203,7 @@ def _poll(db: Session, job: GenerationJob) -> bool:
     if tool is None:
         job.status = JobStatus.failed.value
         job.error = f"Unknown feature_type: {job.feature_type!r}"
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utc_now()
         db.commit()
         return False
 
@@ -215,7 +215,7 @@ def _poll(db: Session, job: GenerationJob) -> bool:
     except GenerationFailed as exc:
         job.status = JobStatus.failed.value
         job.error = str(exc)
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utc_now()
         db.commit()
         return False
     except Exception as exc:
@@ -227,7 +227,7 @@ def _poll(db: Session, job: GenerationJob) -> bool:
         # actual failure modes are known.
         job.status = JobStatus.failed.value
         job.error = str(exc)
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utc_now()
         db.commit()
         return False
 
@@ -247,7 +247,7 @@ def _poll(db: Session, job: GenerationJob) -> bool:
 
     job.output_asset_id = output_asset.id
     job.status = JobStatus.done.value
-    job.completed_at = datetime.utcnow()
+    job.completed_at = utc_now()
 
     # Deducted in the SAME commit as the status flip to "done" — never a
     # separate one. If the process crashes between them, neither happens,
@@ -300,10 +300,10 @@ async def _process_import(import_id: str) -> bool:
         if imp.external_job_id is None:
             return _submit_import(db, imp)
 
-        if (datetime.utcnow() - imp.created_at).total_seconds() > settings.PRODUCT_IMPORT_TIMEOUT_SECONDS:
+        if (utc_now() - imp.created_at).total_seconds() > settings.PRODUCT_IMPORT_TIMEOUT_SECONDS:
             imp.status = ProductImportStatus.failed.value
             imp.error = "Product import timed out"
-            imp.completed_at = datetime.utcnow()
+            imp.completed_at = utc_now()
             db.commit()
             return False
 
@@ -318,7 +318,7 @@ def _submit_import(db: Session, imp: ProductImport) -> bool:
     except Exception as exc:
         imp.status = ProductImportStatus.failed.value
         imp.error = str(exc)
-        imp.completed_at = datetime.utcnow()
+        imp.completed_at = utc_now()
         db.commit()
         return False
 
@@ -339,7 +339,7 @@ def _poll_import(db: Session, imp: ProductImport) -> bool:
         # once `result` actually comes back.
         imp.status = ProductImportStatus.failed.value
         imp.error = str(exc)
-        imp.completed_at = datetime.utcnow()
+        imp.completed_at = utc_now()
         db.commit()
         return False
 
@@ -350,7 +350,7 @@ def _poll_import(db: Session, imp: ProductImport) -> bool:
         # user than anything we'd write here.
         imp.status = ProductImportStatus.failed.value
         imp.error = result.get("message") or f"Scrape did not succeed (status: {result.get('status')})"
-        imp.completed_at = datetime.utcnow()
+        imp.completed_at = utc_now()
         db.commit()
         return False
 
@@ -386,7 +386,7 @@ def _poll_import(db: Session, imp: ProductImport) -> bool:
         )
 
     imp.status = ProductImportStatus.done.value
-    imp.completed_at = datetime.utcnow()
+    imp.completed_at = utc_now()
 
     # Same "deduct in the same commit as marking done" principle as
     # run_generation_job's _poll — a crash between the two can never charge
@@ -401,16 +401,18 @@ def _poll_import(db: Session, imp: ProductImport) -> bool:
 async def refill_due_credits(ctx: dict) -> None:
     """Runs daily (WorkerSettings.cron_jobs below). Grants a plan's
     credit_allowance to every team whose next_credit_refill_at has passed —
-    applies UNIFORMLY to Free/monthly/yearly teams alike, one mechanism,
-    no special cases. This is deliberately NOT how a team's FIRST grant
+    applies UNIFORMLY to Free/weekly/monthly/yearly teams alike, one
+    mechanism, no special cases; add_refill_interval is what makes the
+    NEXT due date match the plan's own cadence (a Weekly plan advances a
+    week, not a month). This is deliberately NOT how a team's FIRST grant
     happens (that's synchronous — billing_controller.assign_free_plan and
     the subscription.activated webhook handler) precisely so a brand-new
     signup never waits on this daily tick for its first credits; this cron
-    only ever handles the SECOND cycle onward. See BOOK.md Chapter 17."""
+    only ever handles the SECOND cycle onward."""
     db = SessionLocal()
     try:
         due = db.query(TeamSubscription).filter(
-            TeamSubscription.next_credit_refill_at <= datetime.utcnow(),
+            TeamSubscription.next_credit_refill_at <= utc_now(),
             TeamSubscription.status.in_([SubscriptionStatus.active.value, SubscriptionStatus.free.value]),
         ).all()
         for sub in due:
@@ -418,7 +420,7 @@ async def refill_due_credits(ctx: dict) -> None:
             if plan is None:
                 continue
             apply_credit_delta(db, sub.team_id, plan.credit_allowance, reason=CreditReason.plan_grant.value)
-            sub.next_credit_refill_at = add_one_month(sub.next_credit_refill_at)
+            sub.next_credit_refill_at = add_refill_interval(sub.next_credit_refill_at, plan.billing_cycle)
         db.commit()
     finally:
         db.close()

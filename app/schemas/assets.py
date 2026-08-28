@@ -1,9 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.models.asset import AssetKind, MediaType
 
 
 class AssetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     team_id: str
     created_by: str
@@ -12,10 +14,6 @@ class AssetOut(BaseModel):
     storage_key: str
     url: str
     is_saved_product: bool
-
-    class Config:
-        from_attributes = True
-
 
 class AssetListOut(BaseModel):
     total: int

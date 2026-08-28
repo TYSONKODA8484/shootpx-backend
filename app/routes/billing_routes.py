@@ -6,19 +6,35 @@ from app.core.db import get_db
 from app.core.payment_provider import payment_provider
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.billing import CancelRequest, ConfirmPaymentRequest, CreditPackOut, PlanOut, SubscribeRequest, TopupRequest
+from app.schemas.billing import (
+    BillingConfigOut, CancelRequest, ConfirmPaymentRequest, CreditPackOut, PlanOut, SubscribeRequest, TopupRequest,
+)
 
 router = APIRouter(tags=["billing"])
 
 
+@router.get("/billing/config", response_model=BillingConfigOut)
+def get_billing_config(db: Session = Depends(get_db)):
+    """Call this before rendering the pricing page — hide the Subscription
+    tab entirely when subscriptions_enabled is false (same for
+    credits_enabled/Credits tab). Public, no auth needed: this is UI
+    configuration, not account data."""
+    return billing_controller.get_billing_config(db)
+
+
 @router.get("/plans", response_model=list[PlanOut])
-def list_plans(db: Session = Depends(get_db)):
-    return billing_controller.list_plans(db)
+def list_plans(region: str | None = None, db: Session = Depends(get_db)):
+    """region is optional and frontend-supplied (see core/geo_pricing.py's
+    docstring for why this isn't GeoIP-guessed server-side) — e.g.
+    GET /plans?region=US. Omitted entirely, this returns every plan
+    (all regions mixed) for back-compat with any caller that doesn't yet
+    send one."""
+    return billing_controller.list_plans(db, region)
 
 
 @router.get("/billing/credit-packs", response_model=list[CreditPackOut])
-def list_credit_packs(db: Session = Depends(get_db)):
-    return billing_controller.list_credit_packs(db)
+def list_credit_packs(region: str | None = None, db: Session = Depends(get_db)):
+    return billing_controller.list_credit_packs(db, region)
 
 
 @router.post("/billing/subscribe", status_code=status.HTTP_201_CREATED)

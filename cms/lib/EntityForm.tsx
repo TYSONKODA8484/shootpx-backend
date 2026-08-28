@@ -18,16 +18,42 @@ export function EntityForm({ entity, id }: EntityFormProps) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.entities().then((all) => {
-      const found = all.find((e) => e.name === entity) ?? null;
-      setConfig(found);
-      if (found && id) {
-        api.get(entity, id).then(setValues);
-      }
-    });
-  }, [entity, id]);
+    let cancelled = false;
+    setConfig(null);
+    setValues({});
+    setError(null);
 
-  if (!config) return <p className="text-slate-400">Loading...</p>;
+    async function load() {
+      try {
+        const all = await api.entities();
+        if (cancelled) return;
+        const found = all.find((e) => e.name === entity) ?? null;
+        if (!found) {
+          setError(`Unknown entity: ${entity}`);
+          return;
+        }
+        setConfig(found);
+        if (id) {
+          const row = await api.get(entity, id);
+          if (!cancelled) setValues(row);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 401) {
+          router.push("/login");
+          return;
+        }
+        setError(err instanceof ApiError ? err.message : "Failed to load row");
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [entity, id, router]);
+
+  if (!config) return <p className={error ? "text-red-400" : "text-slate-400"}>{error ?? "Loading..."}</p>;
 
   const isCreate = !id;
 

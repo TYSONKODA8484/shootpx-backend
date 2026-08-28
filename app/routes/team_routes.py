@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.controllers import team_controller
 from app.core.db import get_db
 from app.middleware.auth import get_current_user
-from app.models.team import TeamRole
+from app.models.team import Team, TeamRole
 from app.models.user import User
 from app.schemas.teams import AddMemberResult, InviteOut, MemberAdd, MemberOut, TeamCreate, TeamOut, TeamUpdate
 
@@ -48,7 +48,10 @@ def list_members(team_id: str, db: Session = Depends(get_db), current_user: User
 def list_pending_invites(team_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     invites = team_controller.list_pending_invites(db, team_id, current_user)
     return [
-        InviteOut(id=i.id, email=i.email, role=TeamRole(i.role), created_at=i.created_at.isoformat())
+        InviteOut(
+            id=i.id, email=i.email, role=TeamRole(i.role),
+            created_at=i.created_at.isoformat(), expires_at=i.expires_at.isoformat(),
+        )
         for i in invites
     ]
 
@@ -61,21 +64,45 @@ def add_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    outcome, result = team_controller.add_member(db, team_id, current_user, payload)
+    """ALWAYS creates a pending invite and emails it — see
+    team_controller.add_member's docstring. The invited person is not a
+    team member until they click the emailed link (which lands on
+    continue_url with ?invite_id=... appended) and it's accepted via
+    POST /auth/session."""
+    invite = team_controller.add_member(db, team_id, current_user, payload)
 
-    if outcome == "added":
-        return AddMemberResult(
-            status="added",
-            member=MemberOut(
-                user_id=result.id, email=result.email, name=result.name, avatar_url=result.avatar_url,
-                role=payload.role,
-            ),
-        )
-
+    team = db.get(Team, team_id)
     background_tasks.add_task(
-        team_controller.send_team_invite_email, result.email, result.team.name, payload.continue_url
+        team_controller.send_team_invite_email, invite.email, team.name, payload.continue_url, invite.id
     )
     return AddMemberResult(
-        status="invited",
-        invite=InviteOut(id=result.id, email=result.email, role=TeamRole(result.role), created_at=result.created_at.isoformat()),
+        invite=InviteOut(
+            id=invite.id, email=invite.email, role=TeamRole(invite.role),
+            created_at=invite.created_at.isoformat(), expires_at=invite.expires_at.isoformat(),
+        ),
     )
+
+
+@router.delete("/{team_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_member(
+    team_id: str,
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner-only. 400 if user_id is yourself (use DELETE /teams/{team_id}
+    instead) or the team's last remaining owner — see
+    team_controller.remove_member's docstring."""
+    team_controller.remove_member(db, team_id, current_user, user_id)
+
+
+@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_team(
+    team_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner-only SOFT delete — see Team's and team_controller.delete_team's
+    docstrings. 400 if there's a currently-active paid subscription;
+    cancel it first via POST /billing/cancel."""
+    team_controller.delete_team(db, team_id, current_user)

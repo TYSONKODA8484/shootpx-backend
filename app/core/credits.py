@@ -7,7 +7,7 @@ update itself has to be atomic regardless of caller.
 """
 
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -17,15 +17,58 @@ from app.models.credit import CreditTransaction
 
 def add_one_month(dt: datetime) -> datetime:
     """dt + 1 calendar month, clamping day-of-month for overflow (Jan 31 ->
-    Feb 28/29, not a crash). Used everywhere a subscription's
-    next_credit_refill_at advances — stdlib-only rather than pulling in
+    Feb 28/29, not a crash). stdlib-only rather than pulling in
     python-dateutil for one function, matching this codebase's otherwise
-    lean dependency list."""
+    lean dependency list. Kept as its own function (rather than folded into
+    add_refill_interval below) since add_one_year also builds on it."""
     month = dt.month + 1
     year = dt.year + (month - 1) // 12
     month = (month - 1) % 12 + 1
     day = min(dt.day, calendar.monthrange(year, month)[1])
     return dt.replace(year=year, month=month, day=day)
+
+
+def add_one_year(dt: datetime) -> datetime:
+    """dt + 12 calendar months — same day-of-month clamping as
+    add_one_month (Feb 29 on a non-leap target year -> Feb 28), just
+    applied twelve times so the two never drift out of sync on how they
+    handle month-end overflow."""
+    result = dt
+    for _ in range(12):
+        result = add_one_month(result)
+    return result
+
+
+def add_refill_interval(dt: datetime, billing_cycle: str) -> datetime:
+    """Advances `dt` by however often THIS billing_cycle actually refills
+    credits — every plan used to refill monthly regardless of
+    billing_cycle (a real mismatch once a Weekly plan existed: "80
+    credits/week" was only ever being granted once a month). 'free'
+    refills monthly, same as 'monthly' — the Free plan has no cycle of its
+    own to speak of, monthly has always been its cadence."""
+    if billing_cycle == "weekly":
+        return dt + timedelta(weeks=1)
+    if billing_cycle == "yearly":
+        return add_one_year(dt)
+    return add_one_month(dt)  # 'monthly' and 'free'
+
+
+def period_length(billing_cycle: str) -> timedelta:
+    """How long ONE billing period lasts, for setting
+    TeamSubscription.current_period_end — used instead of a
+    hardcoded 30 days so a weekly/yearly subscriber's period-end (and
+    therefore how long they keep paid-tier access after cancelling) isn't
+    silently wrong for anything but a monthly plan. Approximates a
+    calendar year/month as 365/30 days rather than add_one_year/
+    add_one_month here since this produces a timedelta to ADD to "now",
+    not a calendar-aware advance of an existing date — good enough for a
+    period-end display, not used for actual refill scheduling (that's
+    add_refill_interval, which IS calendar-aware)."""
+    if billing_cycle == "weekly":
+        return timedelta(weeks=1)
+    if billing_cycle == "yearly":
+        return timedelta(days=365)
+    return timedelta(days=30)  # 'monthly' and 'free'
 
 
 def apply_credit_delta(db: Session, team_id: str, amount: int, reason: str, reference_id: str | None = None) -> int:

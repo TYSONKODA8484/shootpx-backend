@@ -455,7 +455,7 @@ works**, **the files involved**, and — where it applies — **what it replaced
 
 ## Chapter 1 — Configuration
 
-**Status: 🟢 CURRENT** · **File:** [`app/core/config.py`](../app/core/config.py) · **Template:** [`.env.example`](../.env.example)
+**Status: 🟡 CHANGED** (see `DEBUG` parsing below) · **File:** [`app/core/config.py`](../app/core/config.py) · **Template:** [`.env.example`](../.env.example)
 
 ### The problem
 
@@ -524,6 +524,37 @@ See [Chapter 15](#chapter-15--caching).
 > `.env.example` and the real setup use **Resend** (`smtp.resend.com`, user
 > `resend`, password = the `re_...` API key). The code defaults are stale. See
 > [Appendix E](#appendix-e-known-documentation-drift).
+
+### 🟡 What changed: `DEBUG` now tolerates deployment-style strings
+
+> 🔴 **Original behavior:** `DEBUG: bool = True`, with nothing but Pydantic's
+> default bool coercion in front of it. That coercion accepts `"true"`/`"1"`/
+> `"yes"` etc., but a machine-level environment variable set to `DEBUG=release`
+> (a real thing found on one dev machine, shadowing `.env`'s `DEBUG=true`) is
+> not one of them — `Settings()` raised at import time and the app wouldn't
+> start at all. **Why it went away:** the fix belongs in the app, not in a
+> README telling every developer to check `echo $DEBUG` first — see
+> [Timeline, Era 13](#era-13--pre-production-health-check-then-fixing-everything-it-found-2026-08-27-uncommitted).
+
+🟢 **Current:** a `field_validator("DEBUG", mode="before")` normalizes the
+string *before* Pydantic's own bool coercion sees it:
+
+```python
+@field_validator("DEBUG", mode="before")
+@classmethod
+def parse_debug(cls, value: Any) -> Any:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"release", "prod", "production"}:
+            return False
+        if normalized in {"dev", "development"}:
+            return True
+    return value
+```
+
+Anything not in those two sets (including the ordinary `"true"`/`"false"`
+strings) falls through unchanged to Pydantic's normal coercion — this only
+adds tolerance, it doesn't replace the existing behavior.
 
 ---
 
@@ -2890,6 +2921,79 @@ is visible right where an operator clicks it, not just documented in a
 chapter they'd have to go find.
 
 ---
+
+## Era 13 — Pre-Production Health Check, Then Fixing Everything It Found *(2026-08-27, uncommitted)*
+
+A full backend + CMS check before shipping, run cold (fresh clone
+assumptions, no prior context): Python compile check, the full pytest
+suite, `alembic upgrade head`, `npm ci` + `npm run build` + `npm audit` on
+the CMS. Backend was clean (72 passed). Six real issues came back, all
+fixed the same session:
+
+**1. `DEBUG=release` crashed the app on this dev machine.** A Windows
+user-level environment variable (`DEBUG=release`) shadowed `.env`'s
+`DEBUG=true` and failed Pydantic's bool coercion at import time — the
+kind of bug that only shows up on one machine and looks like "the code is
+broken" until you diff the environment. Fixed at the source, not by
+telling the user to unset it: `Settings.DEBUG` now has a `field_validator`
+that maps `"release"/"prod"/"production"` → `False` and
+`"dev"/"development"` → `True` before Pydantic's normal bool coercion
+sees it. See [Chapter 1](#chapter-1--configuration).
+
+**2. `next@14.2.15` had a critical, publicly-known Next.js CVE plus a
+high-severity PostCSS one in its dependency tree** (`cms/package.json`).
+Patching within the 14.x line wasn't enough — `npm audit` still flagged
+the whole line — so the CMS was moved to **Next 16.3.3** (Turbopack,
+still React 18) instead. `npm audit` now reports 0 vulnerabilities.
+
+**3. `next lint` opened an interactive ESLint setup prompt** instead of
+linting — meaning CI could never actually run lint. Replaced with a real
+flat `eslint.config.mjs` built on `eslint-config-next/core-web-vitals`
+and `"lint": "eslint ."`. First attempt used `eslint@10`, which crashed —
+`eslint-config-next@16`'s bundled `eslint-plugin-react-hooks` still calls
+the pre-flat-config `context.getFilename()`, removed in ESLint 10. Pinned
+to `eslint@9.39.5` (matching the package's own declared
+`peerDependencies: { eslint: ">=9.0.0" }`) and lint runs clean.
+
+That surfaced `react-hooks/set-state-in-effect` — a new, error-by-default,
+React-Compiler-oriented rule — against three effects in the CMS's data
+loading. One (`lib/fields.tsx`'s JSON-editor text state) really was the
+textbook "state mirroring a prop" case, so it was rewritten as a
+render-time adjustment per React's own docs, no effect at all. The other
+two (`EntityForm.tsx`, the entity list page) are legitimate
+fetch-on-mount/param-change effects — the exact pattern React's docs use
+as the *sanctioned* case for an effect — which this rule can't tell apart
+from the anti-pattern it's meant to catch. Downgraded to `warn` in
+`eslint.config.mjs`, with a comment explaining why, rather than force an
+architecture change or silence it outright.
+
+**4. Two CMS pages could hang on `"Loading..."` forever.**
+`lib/EntityForm.tsx` and `app/(dashboard)/[entity]/page.tsx` fetched
+config/row data with no failure path beyond a 401 redirect — an unknown
+entity name, a 404, or a network error left the page stuck. Both now
+surface the error and stop rendering the loading state.
+
+**5. The CMS's JSON field editor silently discarded invalid JSON.**
+`lib/fields.tsx` caught the parse error and kept the last-known-good
+value with no indication anything was wrong — an admin could believe
+they'd saved edited JSON that was never actually committed. Now shows a
+validation message and keeps the invalid text on screen instead of
+reverting it.
+
+**6. 252 pytest warnings, mostly two deprecated patterns used
+everywhere.** Pydantic v2's `class Config:` (→ `model_config =
+ConfigDict(...)` across every schema in `app/schemas/`) and
+`datetime.utcnow()` (→ a new `app/core/time.py::utc_now()` helper —
+`datetime.now(UTC).replace(tzinfo=None)`, kept naive on purpose so it
+stays a drop-in replacement for the existing naive `DateTime` columns).
+Full pytest run afterward: 72 passed, 0 warnings.
+
+Nothing in this Era is committed — it's the working tree on top of Era
+12, verified end-to-end (`DEBUG=release` set, `pytest` → 72 passed;
+`npm run lint` → exit 0; `npm audit` → 0 vulnerabilities; `npm run
+build` → succeeds) but deliberately left for the user to commit.
+
+---
 ---
 
 # Part V — The Deprecation Ledger
@@ -2978,6 +3082,17 @@ decision or wonders why a comment mentions something that doesn't exist.
 | **Removed by** | `999725a` |
 | **Why** | On Windows, `getaddrinfo("localhost")` returns `::1` first and `urllib` tries addresses sequentially — a ~2s timeout per request against uvicorn's IPv4-only default bind. Delayed the first poll enough to fail a timing assertion **that was actually correct** |
 | **Replaced by** | `http://127.0.0.1:8000`, with a comment explaining why, so nobody "cleans it up" |
+
+### 🔴 9. Pydantic v1-style `class Config:` on every schema
+
+| | |
+|---|---|
+| **What it was** | Every `app/schemas/*.py` model configured itself with a nested `class Config: from_attributes = True` (or similar) — Pydantic v1's pattern, still accepted by v2 but deprecated |
+| **Lived** | Initial commit → 2026-08-27 |
+| **Removed by** | uncommitted, Era 13 |
+| **Why** | Emitted a `PydanticDeprecatedSince20` warning on every single schema class — 252 warnings total across the test run once `datetime.utcnow()`'s were counted too, drowning out warnings that might actually matter |
+| **Replaced by** | `model_config = ConfigDict(from_attributes=True)` (or whatever the model needed), the v2-native form |
+| **Note** | Same Era also replaced every `datetime.utcnow()` call (models' column defaults, controllers, `worker.py`) with `app/core/time.py::utc_now()` — not a removal of a *pattern* on the same scale, so it doesn't get its own ledger row, but it's the other half of "why pytest went from 252 warnings to 0" |
 
 ---
 ---

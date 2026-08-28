@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.asset import MediaType
 from app.models.generation_job import JobStatus
@@ -29,6 +29,8 @@ class GenerateRequest(BaseModel):
 
 
 class GenerationJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     team_id: str
     created_by: str
@@ -37,10 +39,6 @@ class GenerationJobOut(BaseModel):
     source_asset_id: str | None
     output_asset_id: str | None
     error: str | None
-
-    class Config:
-        from_attributes = True
-
 
 class BulkGenerateRequest(BaseModel):
     team_id: str
