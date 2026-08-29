@@ -57,7 +57,7 @@ abstraction) **before** it is ever handed back as an `Asset.url`:
 
 - Model-image "generate" candidates (step 1) → saved as a real `Asset`
   immediately, every attempt, clean or flagged.
-- Final per-pose outputs (step 3) → `FalOnModelProvider.poll_result()`
+- Final per-pose outputs (step 3) → `FalImageEditProvider.poll_result()`
   downloads the finished image's bytes and returns them as
   `GenerationResult.content`; `worker.py`'s existing `_poll()` already does
   `storage.save(...)` + creates the `Asset` from that — **zero changes
@@ -73,7 +73,7 @@ new DB rows are created for inputs.
 | File | Purpose |
 |---|---|
 | `app/tools/on_model_shots.py` | Grows from the registration stub into the real port of `flow.py`: model resolution, both safety layers, `assemble_inputs`, router + VLM pose-prompt writing, `build_image_size`/`validate_custom_size`, config loader. All on-model-shots-specific knowledge lives here. |
-| `app/core/fal_provider.py` | `class FalOnModelProvider(AIProvider)` — generic async submit/poll against fal's `submit`/`status`/`result` API. Knows nothing about poses/prompts/safety; just runs one `image_urls + prompt + image_size → image` call. Named generically since a future tool could reuse it. |
+| `app/core/fal_provider.py` | `class FalImageEditProvider(AIProvider)` — generic async submit/poll against fal's `submit`/`status`/`result` API. Knows nothing about poses/prompts/safety; just runs one `image_urls + prompt + image_size → image` call. Named generically since a future tool could reuse it. |
 | `app/models/tool_config.py` | New `ToolConfig` table (below). |
 | `app/schemas/on_model_shots.py` | Request/response models for the two new endpoints. |
 | `app/controllers/on_model_shots_controller.py` | Steps 1–2's logic. |
@@ -147,7 +147,7 @@ the DB isn't reachable, the JSON file is used in full. `FAL_KEY` stays in
 `.env` — it's a secret, not config, and isn't part of this table.
 
 Controllers (steps 1–2) already have a `db` session via `Depends(get_db)`
-and call `get_config(db)` directly. `FalOnModelProvider` (step 3) has no
+and call `get_config(db)` directly. `FalImageEditProvider` (step 3) has no
 `db` param on the `AIProvider` interface, so it opens its own short-lived
 `SessionLocal()` to read config — same pattern `worker.py`'s `_submit`/
 `_poll` already use.
@@ -222,7 +222,7 @@ class PromptsResponse(BaseModel):
     image_urls: list[str]
     labels: list[str]
     image_size: dict | str    # resolved once here via build_image_size,
-                               # so FalOnModelProvider never has to know
+                               # so FalImageEditProvider never has to know
                                # about aspect-ratio semantics
 ```
 
@@ -253,12 +253,12 @@ Frontend calls the existing endpoint once per prompt from step 2:
 }
 ```
 
-`FalOnModelProvider.submit()`:
+`FalImageEditProvider.submit()`:
 1. Opens a `SessionLocal()`, reads `config["models"]["final_generation"]`.
 2. Calls `fal_client.submit(model, arguments={prompt, image_urls, image_size, num_images: 1, max_images: 1, enable_safety_checker: True})` — fal's real async submit call (not the blocking `.subscribe()` `flow.py`'s tester uses), returns a `request_id` immediately.
 3. Returns `GenerationHandle(external_job_id=f"{model}::{request_id}", provider="fal")` — the model id is embedded so a poll landing on a different worker process later still knows which fal application to ask.
 
-`FalOnModelProvider.poll_result(handle)`:
+`FalImageEditProvider.poll_result(handle)`:
 1. Splits `handle.external_job_id` back into `model, request_id`.
 2. Calls fal's status check; not done → raise `GenerationPending` (worker
    requeues via `Retry`, unchanged).
