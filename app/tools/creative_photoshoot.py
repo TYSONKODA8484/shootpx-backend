@@ -4,29 +4,31 @@ flow re-run, safety check included, not a fan-out). Third tool alongside
 on_model_shots.py and catalog_photoshoot.py — real port of the verified-
 against-real-fal.ai-calls creative_flow.py.
 
-Deliberately thin, same as creative_flow.py: reuses catalog_photoshoot.py's
-already-debugged functions directly (assemble_product_images,
-run_safety_check, _vlm_json_call, build_image_size) rather than
-duplicating them. This tool's generation targets the SAME model catalog
-uses (bytedance/seedream/v5/lite/edit, confirmed 2026-08-29), so
-catalog_photoshoot's config/logic is directly correct here, not a copy of
-it — a deliberate exception to on_model_shots.py/catalog_photoshoot.py's
-own "duplicate rather than share" convention (see creative_flow.py's own
-docstring: re-deriving the VLM-call reasoning-mode fix a third time would
-reintroduce a bug class already fixed once).
+Fully self-contained config, same pattern as the other two tools: this
+tool's own tool_config row (feature_type="creative_photoshoot") holds all
+3 models it needs — catalog_generation (bytedance/seedream/v5/lite/edit,
+same model Catalog Photoshoot uses, confirmed 2026-08-29), prompt_writer,
+and safety_check — plus its own copy of the safety-check system prompt.
+No runtime dependency on catalog_photoshoot's config row; each tool's
+config is independently editable, even though today's values happen to
+match.
 
-Only this tool's own prompt_writer model + creative system prompt live in
-its own tool_config row (feature_type="creative_photoshoot") — the
-generation model and safety-check model/prompt are read from
-catalog_photoshoot's config at call time, always, never copied. This tool
-also registers against catalog_photoshoot's own FalImageEditProvider
-INSTANCE (not a second one) — same generation model, same config row.
+Still reuses catalog_photoshoot.py's already-debugged CODE directly
+(assemble_product_images, run_safety_check, _vlm_json_call,
+build_image_size) rather than duplicating those functions — only the
+config values are duplicated (in JSON/DB), not the logic. This is a
+deliberate exception to on_model_shots.py/catalog_photoshoot.py's own
+"duplicate rather than share" convention for the functions themselves
+(see creative_flow.py's own docstring: re-deriving the VLM-call
+reasoning-mode fix a third time would reintroduce a bug class already
+fixed once) — combined with fully independent config per tool.
 """
 
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.core.fal_provider import FalImageEditProvider
 from app.core.tool_config import load_tool_config
 from app.tools import catalog_photoshoot as catalog_tool
 from app.tools.registry import ToolSpec, register
@@ -105,16 +107,18 @@ def build_creative_prompt(
 
 
 # =============================================================================
-# Tool registration — shares catalog_photoshoot's FalImageEditProvider
-# instance directly (same generation model, same config row) rather than
-# constructing a second one.
+# Tool registration — its own FalImageEditProvider instance, reading this
+# tool's own config row (feature_type="creative_photoshoot"), not
+# catalog_photoshoot's.
 # =============================================================================
+
+provider = FalImageEditProvider(feature_type="creative_photoshoot", model_config_key="catalog_generation")
 
 register(
     ToolSpec(
         feature_type="creative_photoshoot",
         display_name="Creative Photoshoot",
         output_media_type="image",
-        provider=catalog_tool.provider,
+        provider=provider,
     )
 )

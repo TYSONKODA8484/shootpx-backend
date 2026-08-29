@@ -9,8 +9,8 @@ from app.tools import catalog_photoshoot as catalog_tool
 from app.tools import creative_photoshoot as tool
 
 _FAKE_CONFIG = {
-    "models": {"prompt_writer": "m-writer"},
-    "prompts": {"creative_prompt_writer": "sys-creative"},
+    "models": {"catalog_generation": "m-catalog", "prompt_writer": "m-writer", "safety_check": "m-safety"},
+    "prompts": {"creative_prompt_writer": "sys-creative", "safety_check": "sys-safety"},
 }
 
 
@@ -68,9 +68,13 @@ def test_build_creative_prompt_case3_idea_and_prompt_merges_via_vlm(monkeypatch)
     assert "on a marble counter" in captured["prompt"]
 
 
-def test_creative_photoshoot_is_registered_sharing_catalogs_provider():
+def test_creative_photoshoot_is_registered_with_its_own_fal_image_edit_provider():
+    from app.core.fal_provider import FalImageEditProvider
     from app.tools import get_tool
 
     spec = get_tool("creative_photoshoot")
     assert spec is not None
-    assert spec.provider is catalog_tool.provider  # same instance, not a second one
+    assert isinstance(spec.provider, FalImageEditProvider)
+    assert spec.provider is not catalog_tool.provider  # its own instance, own config row
+    assert spec.provider.feature_type == "creative_photoshoot"
+    assert spec.provider.model_config_key == "catalog_generation"

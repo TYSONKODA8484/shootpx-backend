@@ -1,7 +1,7 @@
 """creative_photoshoot_controller — the one pre-step endpoint's controller
-logic. Reuses catalog_photoshoot's assemble/safety/build_image_size
-directly (monkeypatched at that module's boundary), and
-creative_photoshoot's own build_creative_prompt/apply_adult_floor."""
+logic. Reuses catalog_photoshoot's assemble/safety/build_image_size CODE
+directly (monkeypatched at that module's boundary), but always with
+creative_photoshoot's OWN (fully self-contained) config."""
 
 import pytest
 from fastapi import HTTPException
@@ -14,10 +14,9 @@ from app.schemas.creative_photoshoot import CreativePromptRequest
 from app.tools import catalog_photoshoot as catalog_tool
 from app.tools import creative_photoshoot as tool
 
-_CREATIVE_CONFIG = {"models": {"prompt_writer": "m"}, "prompts": {"creative_prompt_writer": "s"}}
-_CATALOG_CONFIG = {
+_CREATIVE_CONFIG = {
     "models": {"catalog_generation": "m", "prompt_writer": "m", "safety_check": "m"},
-    "prompts": {"shot_prompt_writer": "s", "safety_check": "s"},
+    "prompts": {"creative_prompt_writer": "s", "safety_check": "s"},
 }
 
 
@@ -45,7 +44,6 @@ def _make_asset(db, team, user, url="https://x/product.jpg"):
 @pytest.fixture(autouse=True)
 def _patch_config(monkeypatch):
     monkeypatch.setattr(tool, "get_config", lambda db: _CREATIVE_CONFIG)
-    monkeypatch.setattr(catalog_tool, "get_config", lambda db: _CATALOG_CONFIG)
 
 
 def test_build_prompt_rejects_asset_from_another_team(db_session):
