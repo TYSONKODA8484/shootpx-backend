@@ -7,17 +7,18 @@ enqueues instead of calling the product-scrapper service inline) — same
 submit/poll-via-Retry shape, different external system on the other end.
 
 Two independent limits apply to every run_generation_job:
-- a per-team Redis lock (SET NX EX below) — only one generation job for a
-  given team runs at a time, whether it came from /generate or
-  /generate/bulk. This is also the entire mechanism behind bulk's "one
-  after another": there's no separate batch-processing code path, just
-  this same lock.
+- a per-user Redis lock (SET NX EX below) — only one generation job for a
+  given USER runs at a time; different users on the same team can run
+  concurrently. Team credits stay shared (core/credits.py, unaffected by
+  this), only the execution lock is now per-user. This is also the entire
+  mechanism behind bulk's "one after another for that user": there's no
+  separate batch-processing code path, just this same lock.
 - arq's own `max_jobs` (WorkerSettings, bottom of this file) — caps total
   concurrently *running* jobs across every team combined, generation and
   imports alike (they share one worker process's job pool for now — a
   dedicated cap/process split for imports is a reasonable thing to add
   once real traffic shows it's needed, not before).
-If the per-team lock is held by someone else, the job re-queues itself via
+If the per-user lock is held by someone else, the job re-queues itself via
 arq's Retry rather than blocking — so a job waiting on someone else's lock
 does not tie up one of the global max_jobs slots while it waits.
 run_product_import has no per-team lock — nothing about scraping needs
@@ -88,7 +89,7 @@ from app.models import user as user_models  # noqa: F401  (registers User on Bas
 # TeamMembership.user references it by string, same reason as above)
 
 LOCK_TTL_SECONDS = 600  # generous ceiling: if a worker crashes mid-job
-# without releasing, the team isn't wedged forever, just until this expires.
+# without releasing, the user isn't wedged forever, just until this expires.
 # Refreshed (not just set once) on every invocation that still holds it —
 # see run_generation_job — so this is really "600s since the job was last
 # touched", not "600s total", which matters now that one job can span many
@@ -107,15 +108,15 @@ end
 """
 
 
-def _team_lock_key(team_id: str) -> str:
-    return f"lock:team:{team_id}"
+def _user_lock_key(user_id: str) -> str:
+    return f"lock:user:{user_id}"
 
 
-async def run_generation_job(ctx: dict, job_id: str, team_id: str) -> None:
+async def run_generation_job(ctx: dict, job_id: str, team_id: str, created_by: str) -> None:
     redis: Redis = ctx["redis"]
-    lock_key = _team_lock_key(team_id)
+    lock_key = _user_lock_key(created_by)
 
-    # Do we already hold this team's lock from an earlier invocation of this
+    # Do we already hold this user's lock from an earlier invocation of this
     # same job (i.e. this is a poll retry, not the first try)? If so, just
     # refresh its TTL — SET NX would no-op here since the key still exists,
     # which would wrongly look like "someone else has it" below. redis-py

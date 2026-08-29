@@ -24,6 +24,7 @@ from app.models.subscription import TeamSubscription
 from app.models.team import Team, TeamMembership
 from app.models.template import Template
 from app.models.tool import Tool
+from app.models.tool_config import ToolConfig
 from app.models.user import User
 
 FieldKind = Literal["string", "int", "float", "bool", "datetime", "json", "enum", "fk"]
@@ -423,6 +424,24 @@ register(EntityConfig(
             "immediately — no restart, no cache to clear."
         )),
         _CREATED_AT,
+        _UPDATED_AT,
+    ],
+))
+
+register(EntityConfig(
+    name="tool-config",
+    label="Tool Config",
+    model=ToolConfig,
+    pk_field="feature_type",
+    pk_provided_on_create=True,  # no DB default on feature_type
+    search_fields=["feature_type"],
+    fields=[
+        FieldConfig("feature_type", "string", editable=False),
+        FieldConfig("config_json", "json", help_text=(
+            "Models + system prompts for this tool. See "
+            "app/tools/<feature_type>_config.json for the fallback shape "
+            "used when this row doesn't exist or the DB isn't reachable."
+        )),
         _UPDATED_AT,
     ],
 ))

@@ -21,6 +21,7 @@ from app.models import subscription as subscription_models  # noqa: F401  (regis
 from app.models import team as team_models  # noqa: F401  (registers Team/TeamMembership on Base)
 from app.models import template as template_models  # noqa: F401  (registers Template on Base)
 from app.models import tool as tool_models  # noqa: F401  (registers Tool on Base)
+from app.models import tool_config as tool_config_models  # noqa: F401  (registers ToolConfig on Base)
 from app.models import user as user_models  # noqa: F401  (registers User on Base)
 # Every model above still needs importing here even though schema itself is
 # now Alembic's job (alembic/ — run `alembic upgrade head` before starting
@@ -34,10 +35,12 @@ from app.routes.asset_routes import router as asset_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.billing_routes import router as billing_router
 from app.routes.brand_kit_routes import router as brand_kit_router
+from app.routes.catalog_photoshoot_routes import router as catalog_photoshoot_router
 from app.routes.cms_routes import router as cms_router
 from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
 from app.routes.nav_item_routes import router as nav_item_router
+from app.routes.on_model_shots_routes import router as on_model_shots_router
 from app.routes.product_import_routes import router as product_import_router
 from app.routes.team_routes import router as teams_router
 from app.routes.template_routes import router as template_router
@@ -59,6 +62,8 @@ app.include_router(teams_router)
 app.include_router(asset_router)
 app.include_router(activity_router)
 app.include_router(generation_router)
+app.include_router(on_model_shots_router)
+app.include_router(catalog_photoshoot_router)
 app.include_router(product_import_router)
 app.include_router(template_router)
 app.include_router(admin_router)

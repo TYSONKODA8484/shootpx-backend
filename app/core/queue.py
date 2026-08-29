@@ -20,12 +20,15 @@ async def get_queue_pool() -> ArqRedis:
     return _pool
 
 
-async def enqueue_generation_job(job_id: str, team_id: str) -> None:
+async def enqueue_generation_job(job_id: str, team_id: str, created_by: str) -> None:
     """Fire-and-forget: hands the job to arq and returns. The actual AI
     call happens later, in app/worker.py's run_generation_job, once that
-    team's per-team lock is free and a global worker slot is available."""
+    USER's lock is free (per-user, not per-team — different members of the
+    same team can generate concurrently, see
+    docs/superpowers/specs/2026-08-29-on-model-shots-real-provider-design.md's
+    addendum) and a global worker slot is available."""
     pool = await get_queue_pool()
-    await pool.enqueue_job("run_generation_job", job_id, team_id)
+    await pool.enqueue_job("run_generation_job", job_id, team_id, created_by)
 
 
 async def enqueue_product_import(import_id: str) -> None:

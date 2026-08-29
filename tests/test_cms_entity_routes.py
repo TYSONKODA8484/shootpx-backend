@@ -34,7 +34,7 @@ def test_entities_schema_route(client):
     response = client.get("/cms/entities")
     assert response.status_code == 200
     names = {e["name"] for e in response.json()}
-    assert len(names) == 18
+    assert len(names) == 19
     assert "plans" in names
 
 

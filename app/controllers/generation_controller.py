@@ -112,7 +112,7 @@ async def run_generation(db: Session, current_user: User, payload: GenerateReque
     # honestly failed rather than leaving it stuck at "processing" forever
     # with nothing ever going to pick it up.
     try:
-        await enqueue_generation_job(job.id, payload.team_id)
+        await enqueue_generation_job(job.id, payload.team_id, current_user.id)
     except Exception as exc:
         job.status = JobStatus.failed.value
         job.error = f"Failed to enqueue: {exc}"
@@ -183,7 +183,7 @@ async def run_generation_bulk(
     # /generate in Task 4 — but the rest of the batch still gets its shot.
     for job, job_id in zip(jobs, job_ids):
         try:
-            await enqueue_generation_job(job_id, payload.team_id)
+            await enqueue_generation_job(job_id, payload.team_id, current_user.id)
         except Exception as exc:
             job.status = JobStatus.failed.value
             job.error = f"Failed to enqueue: {exc}"

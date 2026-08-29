@@ -2,7 +2,7 @@ from app.core.cms_registry import ENTITIES
 
 
 def test_all_sixteen_entities_registered():
-    assert len(ENTITIES) == 18
+    assert len(ENTITIES) == 19
 
 
 def test_tools_code_owned_fields_are_locked():
