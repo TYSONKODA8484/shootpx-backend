@@ -37,6 +37,7 @@ from app.routes.billing_routes import router as billing_router
 from app.routes.brand_kit_routes import router as brand_kit_router
 from app.routes.catalog_photoshoot_routes import router as catalog_photoshoot_router
 from app.routes.cms_routes import router as cms_router
+from app.routes.creative_photoshoot_routes import router as creative_photoshoot_router
 from app.routes.generation_routes import router as generation_router
 from app.routes.health_routes import router as health_router
 from app.routes.nav_item_routes import router as nav_item_router
@@ -64,6 +65,7 @@ app.include_router(activity_router)
 app.include_router(generation_router)
 app.include_router(on_model_shots_router)
 app.include_router(catalog_photoshoot_router)
+app.include_router(creative_photoshoot_router)
 app.include_router(product_import_router)
 app.include_router(template_router)
 app.include_router(admin_router)
