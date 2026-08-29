@@ -59,6 +59,25 @@ def list_credit_packs(db: Session, region: str | None = None) -> list[CreditPack
     return query.filter((CreditPack.region == resolved) | (CreditPack.region.is_(None))).all()
 
 
+def get_billing_catalog(db: Session, region: str | None = None) -> dict:
+    """Backs GET /billing/catalog — everything a pricing page needs in one
+    round trip: which tabs are even offered (same data as GET
+    /billing/config) plus every plan and credit pack available to buy
+    right now (same data as GET /plans + GET /billing/credit-packs). Those
+    three endpoints still exist and still work unchanged for any other
+    caller, but a pricing page should call this instead of all three.
+    Same region behavior as list_plans/list_credit_packs — pass region to
+    get only that region's paid variants alongside the region-less rows
+    (Free plan, any pack priced the same everywhere), omit for everything
+    mixed."""
+    config = get_billing_config(db)
+    return {
+        **config,
+        "plans": list_plans(db, region),
+        "credit_packs": list_credit_packs(db, region),
+    }
+
+
 def get_free_plan(db: Session) -> Plan:
     plan = db.query(Plan).filter(Plan.billing_cycle == BillingCycle.free.value, Plan.is_active == True).first()  # noqa: E712
     if plan is None:

@@ -7,11 +7,27 @@ from app.core.payment_provider import payment_provider
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.billing import (
-    BillingConfigOut, CancelRequest, ConfirmPaymentRequest, CreditPackOut, CreditUsageByMemberOut,
-    PlanOut, SubscribeRequest, TopupRequest,
+    BillingCatalogOut, BillingConfigOut, CancelRequest, ConfirmPaymentRequest, CreditPackOut,
+    CreditUsageByMemberOut, PlanOut, SubscribeRequest, TopupRequest,
 )
 
 router = APIRouter(tags=["billing"])
+
+
+@router.get("/billing/catalog", response_model=BillingCatalogOut)
+def get_billing_catalog(region: str | None = None, db: Session = Depends(get_db)):
+    """The pricing page's one call: which tabs to even show
+    (subscriptions_enabled/credits_enabled) plus every plan and credit
+    pack available to buy right now (plans/credit_packs) — one round trip
+    instead of three. region is optional, same behavior as /plans and
+    /billing/credit-packs below (e.g. ?region=IN); omitted, both lists
+    come back with every region mixed. Public, no auth: this is catalog
+    data, not account data.
+
+    /billing/config, /plans, and /billing/credit-packs below still exist
+    and still work unchanged for any other caller — this endpoint is the
+    one new pricing-page callers should use instead of all three."""
+    return billing_controller.get_billing_catalog(db, region)
 
 
 @router.get("/billing/config", response_model=BillingConfigOut)
@@ -19,7 +35,10 @@ def get_billing_config(db: Session = Depends(get_db)):
     """Call this before rendering the pricing page — hide the Subscription
     tab entirely when subscriptions_enabled is false (same for
     credits_enabled/Credits tab). Public, no auth needed: this is UI
-    configuration, not account data."""
+    configuration, not account data.
+
+    Superseded by GET /billing/catalog for a pricing-page caller that also
+    needs plans/credit_packs (kept here unchanged for any other caller)."""
     return billing_controller.get_billing_config(db)
 
 

@@ -42,6 +42,18 @@ class CreditPackOut(BaseModel):
     badge: str | None
     features: list[str] | None
 
+class BillingCatalogOut(BaseModel):
+    """Backs GET /billing/catalog — the one call a pricing page needs:
+    which tabs to show (same fields as BillingConfigOut) plus everything
+    purchasable in each (same lists as GET /plans + GET
+    /billing/credit-packs). Public, no auth — this is catalog data, not
+    account data; see billing_controller.get_billing_catalog's docstring."""
+    subscriptions_enabled: bool
+    credits_enabled: bool
+    plans: list[PlanOut]
+    credit_packs: list[CreditPackOut]
+
+
 class SubscribeRequest(BaseModel):
     team_id: str
     plan_id: str  # accepts EITHER the internal plans.id OR a paid plan's provider_plan_id (see PlanOut.plan_id)
