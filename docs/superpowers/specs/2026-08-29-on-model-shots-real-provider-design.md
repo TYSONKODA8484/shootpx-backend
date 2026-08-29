@@ -79,6 +79,7 @@ new DB rows are created for inputs.
 | `app/controllers/on_model_shots_controller.py` | Steps 1–2's logic. |
 | `app/routes/on_model_shots_routes.py` | Steps 1–2's routes, registered in `main.py` like every other router. |
 | `app/tools/on_model_shots_config.json` | Checked-in seed/fallback — today's confirmed model ids + all 3 system prompts + model presets. This is the file you copy to another laptop. |
+| `app/core/tool_config.py` | `load_tool_config(db, feature_type, fallback_path) -> dict` — the DB-row-else-JSON-file logic (below), shared by every tool that has a `tool_config` row. Pulled out here (rather than duplicated per tool) because the Catalog Photoshoot tool (separate spec) needs the identical logic verbatim. |
 | `alembic/versions/xxxx_add_tool_config_table.py` | Creates `tool_config`. |
 
 `requirements.txt` gains `fal-client`. `flow.py`'s use of `requests` becomes
@@ -128,27 +129,30 @@ admin UI code needed.
 with the values you confirmed (the model block above, and the current
 `PROMPT_WRITER_SYSTEM_GENERAL`/`_INTIMATE`/etc. text from `flow.py`).
 
-Loader, in `app/tools/on_model_shots.py`:
+Loader, in `app/core/tool_config.py` (shared, per the New files table):
 
 ```python
-def get_config(db: Session) -> dict:
+def load_tool_config(db: Session, feature_type: str, fallback_path: Path) -> dict:
     try:
-        row = db.get(ToolConfig, "on_model_shots")
+        row = db.get(ToolConfig, feature_type)
         if row and row.config_json:
             return row.config_json
     except Exception:
         pass  # DB unreachable — same crash-tolerance philosophy as
               # main.py's startup tool-sync
-    return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+    return json.loads(fallback_path.read_text(encoding="utf-8"))
 ```
 
-Whole-blob fallback (not per-key merge): if the DB row doesn't exist, or
-the DB isn't reachable, the JSON file is used in full. `FAL_KEY` stays in
-`.env` — it's a secret, not config, and isn't part of this table.
+`app/tools/on_model_shots.py` calls it as
+`load_tool_config(db, "on_model_shots", _CONFIG_PATH)` — one line, not a
+reimplementation. Whole-blob fallback (not per-key merge): if the DB row
+doesn't exist, or the DB isn't reachable, the JSON file is used in full.
+`FAL_KEY` stays in `.env` — it's a secret, not config, and isn't part of
+this table.
 
 Controllers (steps 1–2) already have a `db` session via `Depends(get_db)`
-and call `get_config(db)` directly. `FalImageEditProvider` (step 3) has no
-`db` param on the `AIProvider` interface, so it opens its own short-lived
+and call the loader directly. `FalImageEditProvider` (step 3) has no `db`
+param on the `AIProvider` interface, so it opens its own short-lived
 `SessionLocal()` to read config — same pattern `worker.py`'s `_submit`/
 `_poll` already use.
 
