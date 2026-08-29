@@ -260,6 +260,24 @@ Frontend calls the existing endpoint once per prompt from step 2:
    on the result URL), returns `GenerationResult(media_type="image", content=<bytes>, extension=<guessed from the URL/content-type, same `_guess_extension`-style logic `worker.py` already has for product imports>)`. `worker.py` takes it from there exactly as it does for `MockAIProvider` today.
 4. fal reports failure → raise `GenerationFailed(<its message>)`.
 
+## Progressive results — no waiting for all N poses
+
+The frontend collects the `job_id` from each of the N step-3 `/generate`
+calls and polls the existing `GET /jobs?ids=id1,id2,...` endpoint
+(unchanged) — each job flips `processing` → `done` (with its own output
+URL) independently, the moment that pose finishes, not batched until every
+pose is done. This is poll-based (no websocket/SSE in this app), but has
+the effect the frontend needs: pose 1 is visible as soon as it's ready.
+
+Confirmed acceptable: the existing per-team lock in `worker.py` (shared by
+every tool, not introduced by this feature) means the N poses generate one
+at a time per team rather than concurrently on fal's side — total time for
+the last pose is roughly N× one generation's duration, but each pose still
+appears immediately on its own completion, never held back by its
+siblings. Making a team's own poses run concurrently would mean loosening
+that shared lock — a bigger, cross-cutting change touching every tool's
+worker path, explicitly deferred, not part of this pass.
+
 ## Safety gates — preserved exactly
 
 Every gate from `flow.py` carries over unchanged: keyword blocklist on the
