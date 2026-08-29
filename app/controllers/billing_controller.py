@@ -5,6 +5,7 @@ credits-and-payments-design.md.
 """
 
 from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.credits import add_refill_interval, apply_credit_delta, get_balance, period_length
@@ -14,6 +15,7 @@ from app.core.permissions import compute_permissions, get_membership
 from app.core.time import utc_now
 from app.models.billing_mode import BillingMode
 from app.models.credit import CreditPack, CreditReason, CreditTransaction
+from app.models.generation_job import GenerationJob
 from app.models.payment import Payment, PaymentKind, PaymentStatus
 from app.models.plan import BillingCycle, Plan
 from app.models.subscription import SubscriptionStatus, TeamSubscription
@@ -112,6 +114,55 @@ def get_billing_status(db: Session, current_user: User, team_id: str) -> dict:
             }
             for t in recent
         ],
+    }
+
+
+def get_credit_usage_by_member(db: Session, current_user: User, team_id: str) -> dict:
+    """Backs GET /billing/teams/{team_id}/credit-usage — owner-only (this
+    is a management report, not something every teammate needs to see).
+
+    Only covers CreditReason.generation_spend: that's the only spend
+    reason whose reference_id (a GenerationJob id) reliably identifies WHO
+    caused it (GenerationJob.created_by). export_spend's reference_id is
+    the source asset id, whose created_by is whoever made that asset
+    originally — not necessarily whoever clicked Export — so attributing
+    it per-user here would misattribute the spend; deliberately excluded
+    rather than shown wrong. plan_grant/topup_purchase/refund/
+    manual_adjustment/subscription_cancelled are team-level events with no
+    single "user who did this" to attribute to."""
+    membership = get_membership(db, team_id, current_user.id)
+    if not compute_permissions(membership.role).can_manage_team:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the team owner can view credit usage by member")
+
+    rows = (
+        db.query(GenerationJob.created_by, func.sum(CreditTransaction.amount))
+        .join(GenerationJob, GenerationJob.id == CreditTransaction.reference_id)
+        .filter(
+            CreditTransaction.team_id == team_id,
+            CreditTransaction.reason == CreditReason.generation_spend.value,
+        )
+        .group_by(GenerationJob.created_by)
+        .all()
+    )
+
+    user_ids = [user_id for user_id, _ in rows]
+    users_by_id = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+    by_member = [
+        {
+            "user_id": user_id,
+            "email": users_by_id[user_id].email if user_id in users_by_id else None,
+            "name": users_by_id[user_id].name if user_id in users_by_id else None,
+            "credits_spent": -total,  # CreditTransaction.amount is signed negative for a spend
+        }
+        for user_id, total in rows
+    ]
+    by_member.sort(key=lambda m: m["credits_spent"], reverse=True)
+
+    return {
+        "team_id": team_id,
+        "total_credits_spent": sum(m["credits_spent"] for m in by_member),
+        "by_member": by_member,
     }
 
 

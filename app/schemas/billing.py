@@ -93,6 +93,23 @@ class BillingStatusOut(BaseModel):
     recent_transactions: list[CreditTransactionOut]
 
 
+class MemberCreditUsage(BaseModel):
+    user_id: str
+    email: str | None
+    name: str | None
+    credits_spent: int
+
+
+class CreditUsageByMemberOut(BaseModel):
+    """Only covers CreditReason.generation_spend — see
+    billing_controller.get_credit_usage_by_member's docstring for why
+    export_spend and the team-level reasons (plan_grant, etc.) aren't
+    included. by_member is sorted highest-spend first."""
+    team_id: str
+    total_credits_spent: int
+    by_member: list[MemberCreditUsage]
+
+
 class BillingConfigOut(BaseModel):
     """Which pricing-page tab(s) are currently offered — see
     app/models/billing_mode.py's docstring. A well-behaved frontend calls

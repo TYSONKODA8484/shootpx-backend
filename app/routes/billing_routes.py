@@ -7,7 +7,8 @@ from app.core.payment_provider import payment_provider
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.billing import (
-    BillingConfigOut, CancelRequest, ConfirmPaymentRequest, CreditPackOut, PlanOut, SubscribeRequest, TopupRequest,
+    BillingConfigOut, CancelRequest, ConfirmPaymentRequest, CreditPackOut, CreditUsageByMemberOut,
+    PlanOut, SubscribeRequest, TopupRequest,
 )
 
 router = APIRouter(tags=["billing"])
@@ -84,6 +85,17 @@ def get_billing_status(
     current_user: User = Depends(get_current_user),
 ):
     return billing_controller.get_billing_status(db, current_user, team_id)
+
+
+@router.get("/billing/teams/{team_id}/credit-usage", response_model=CreditUsageByMemberOut)
+def get_credit_usage_by_member(
+    team_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner-only — see billing_controller.get_credit_usage_by_member's
+    docstring for exactly which spend this covers."""
+    return billing_controller.get_credit_usage_by_member(db, current_user, team_id)
 
 
 @router.post("/billing/webhook/{provider}")
