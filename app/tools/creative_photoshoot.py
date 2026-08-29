@@ -117,7 +117,7 @@ provider = FalImageEditProvider(feature_type="creative_photoshoot", model_config
 register(
     ToolSpec(
         feature_type="creative_photoshoot",
-        display_name="Creative Photoshoot",
+        display_name="Product Staging",
         output_media_type="image",
         provider=provider,
     )
