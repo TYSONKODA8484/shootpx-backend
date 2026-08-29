@@ -3,6 +3,10 @@
 **Status:** Ready for review
 **Depends on:** nothing (touches only `on_model_shots`'s own files + one new table)
 **Depended on by:** nothing yet — the other 22 tools stay on `MockAIProvider`
+**Also includes:** one shared-infrastructure fix (the generation lock, see
+the addendum near the end) that affects every tool's concurrency, not just
+this one — called out explicitly since it's a deliberate, confirmed
+exception to the scoping rule below.
 
 ## Why
 
@@ -16,8 +20,10 @@ prompts out of code into a DB row an admin can edit from the CMS — with a
 checked-in JSON file as the fallback/seed when no DB is reachable yet (e.g.
 a fresh laptop), so the same feature works before and after a DB exists.
 
-Scoped **only** to `on_model_shots`. No other tool, and no app-wide config
-system, is touched.
+Scoped to `on_model_shots`'s own files, plus the one shared-lock fix below
+(confirmed in review — every tool's generation goes through one lock
+mechanism, so there's no way to fix it for just one tool). No app-wide
+config system, and no other tool's request/response logic, is touched.
 
 ## Architecture — how a shoot maps onto the existing job system
 
@@ -300,6 +306,36 @@ gate is removed, loosened, or reordered from the working version.
 - Presets (`config["presets"]`) are plain URLs the admin edits into
   `ToolConfig`/the JSON fallback directly — no upload UI for adding a new
   preset image in this pass.
+
+## Addendum — per-user generation lock (shared infrastructure)
+
+**Not scoped to `on_model_shots`** — this changes concurrency behavior for
+every tool. Raised in review because a team running on-model-shots is
+exactly where the current bug bites hardest: a shoot is several sequential
+jobs (one per pose, see above), and today's lock would block every other
+member of the team for that entire time.
+
+**Current behavior (`app/worker.py`):** the lock is per-**team**
+(`_team_lock_key(team_id)`) — any one generation job for a team blocks
+every other job for that same team, regardless of which user started it.
+With N people on a team, only one person's generation runs at a time.
+
+**Wanted behavior:** credits stay team-wide (unchanged — team balance
+checking in `generation_controller._resolve_and_check_credits`/
+`_held_credits` already sums correctly across the whole team, no changes
+needed there), but the *execution* lock becomes per-**user**
+(`created_by`): different users on the same team can generate
+concurrently; one user's own second generation still queues behind their
+first, same as today.
+
+**Change:**
+- `app/core/queue.py` — `enqueue_generation_job(job_id, team_id, created_by)`, passes `created_by` through to the arq job.
+- `app/controllers/generation_controller.py` — both call sites (`run_generation`, `run_generation_bulk`) pass `current_user.id` as `created_by`.
+- `app/worker.py` — `run_generation_job(ctx, job_id, team_id, created_by)`; `_team_lock_key(team_id)` → `_user_lock_key(user_id)`, locking on `created_by` instead of `team_id`. Docstrings referencing "per-team lock" updated to "per-user lock". `MAX_CONCURRENT_GENERATIONS` (the global cap across every team/user combined) is untouched — orthogonal to this.
+
+No schema change, no new table, no API contract change — `team_id` stays
+on `GenerationJob` and every existing response shape exactly as-is; this
+only touches which Redis key `worker.py` locks on internally.
 
 ## Testing
 
