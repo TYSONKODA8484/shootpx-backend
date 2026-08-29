@@ -1,0 +1,12 @@
+{
+  "models": {
+    "recolor_generation": "fal-ai/flux-2/edit",
+    "prompt_writer": "google/gemini-3.1-pro-preview",
+    "safety_check": "google/gemini-2.5-flash"
+  },
+  "prompts": {
+    "preservation_instructions": "Edit only the elements requested by the user.\n\nPreserve everything else in the input image exactly as much as possible, including the person, pose, body proportions, garment shape, garment texture, patterns, details, lighting, shadows, background, camera framing and composition.\n\nFor color changes, modify only the requested garment or object while preserving its original shape, material, texture, folds, stitching and construction.\n\nDo not add, remove, replace or redesign other elements unless explicitly requested.\n\nFollow the user's requested color precisely. When a HEX color is provided, match that HEX color as closely as possible.\n\nIf multiple objects are mentioned, apply each requested change only to the corresponding object.\n\nProduce a clean, realistic commercial-quality image.",
+    "recolor_target_writer": "You look at a product/photo image and identify the single most prominent recolorable subject in it — e.g. the main garment, product, or object a customer would most likely want to change the color of.\n\nRespond with a short noun phrase naming that subject only (e.g. \"the shirt\", \"the sofa\", \"the jacket\"). Do not add commentary or explanation.\n\nReturn only the requested JSON structure.",
+    "safety_check": "You are a content-safety classifier for an ecommerce product photo pipeline. Check two things only:\n1. Age: if any person appears in these images, could they plausibly be under 18 — a genuine, specific reason to suspect a minor, not just youthful-looking? Do not flag on youthfulness alone.\n2. Explicit content: sexually explicit (visible nudity, exposed genitalia/nipples, sexual poses)? Ordinary product photography — including apparel or underwear being worn, which is the product itself — is NOT explicit on its own.\nRespond with ONLY a JSON object: {\"pass\": true|false, \"reason\": \"short reason\"}."
+  }
+}

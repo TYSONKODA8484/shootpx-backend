@@ -43,6 +43,7 @@ from app.routes.health_routes import router as health_router
 from app.routes.nav_item_routes import router as nav_item_router
 from app.routes.on_model_shots_routes import router as on_model_shots_router
 from app.routes.product_import_routes import router as product_import_router
+from app.routes.recolor_routes import router as recolor_router
 from app.routes.team_routes import router as teams_router
 from app.routes.template_routes import router as template_router
 from app.tools.sync import sync_tools_to_db
@@ -66,6 +67,7 @@ app.include_router(generation_router)
 app.include_router(on_model_shots_router)
 app.include_router(catalog_photoshoot_router)
 app.include_router(creative_photoshoot_router)
+app.include_router(recolor_router)
 app.include_router(product_import_router)
 app.include_router(template_router)
 app.include_router(admin_router)

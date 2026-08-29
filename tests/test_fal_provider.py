@@ -47,7 +47,29 @@ def test_submit_calls_fal_with_resolved_model_and_returns_handle(monkeypatch):
     assert captured["model"] == "fal-ai/some/model"
     assert captured["arguments"]["prompt"] == "a pose"
     assert captured["arguments"]["enable_safety_checker"] is True
+    assert captured["arguments"]["max_images"] == 1  # default include_max_images=True
     assert handle == GenerationHandle(external_job_id="fal-ai/some/model::req-123", provider="fal")
+
+
+def test_submit_omits_max_images_when_include_max_images_is_false(monkeypatch):
+    """fal-ai/flux-2/edit's schema has no max_images field (confirmed
+    2026-08-29) — a provider instance built with include_max_images=False
+    must not send it."""
+    captured = {}
+
+    class _FakeHandle:
+        request_id = "req-456"
+
+    def fake_submit(model, arguments):
+        captured["arguments"] = arguments
+        return _FakeHandle()
+
+    monkeypatch.setattr(fal_provider_module.fal_client, "submit", fake_submit)
+
+    provider = FalImageEditProvider(feature_type="on_model_shots", model_config_key="final_generation", include_max_images=False)
+    provider.submit("on_model_shots", None, {"prompt": "p", "image_urls": ["http://x/1.jpg"], "image_size": "square_hd"})
+
+    assert "max_images" not in captured["arguments"]
 
 
 def test_poll_result_pending_when_in_progress(monkeypatch):

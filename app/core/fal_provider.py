@@ -39,9 +39,14 @@ def _guess_extension(url: str, content_type: str) -> str:
 
 
 class FalImageEditProvider(AIProvider):
-    def __init__(self, feature_type: str, model_config_key: str):
+    def __init__(self, feature_type: str, model_config_key: str, include_max_images: bool = True):
         self.feature_type = feature_type
         self.model_config_key = model_config_key
+        self.include_max_images = include_max_images  # False for models whose
+        # schema doesn't have this field (e.g. fal-ai/flux-2/edit, confirmed
+        # 2026-08-29 — recolor_flow.py's verified request omits it) — sending
+        # an unrecognized field to a model that doesn't expect it isn't
+        # assumed safe, so this is opt-out per provider instance, not global.
         self._fallback_path = Path(__file__).resolve().parent.parent / "tools" / f"{feature_type}_config.json"
 
     def _model_id(self) -> str:
@@ -59,9 +64,10 @@ class FalImageEditProvider(AIProvider):
             "image_urls": input_payload["image_urls"],
             "image_size": input_payload["image_size"],
             "num_images": 1,
-            "max_images": 1,
             "enable_safety_checker": True,  # second, independent safety layer — do not disable
         }
+        if self.include_max_images:
+            args["max_images"] = 1
         handle = fal_client.submit(model, arguments=args)
         return GenerationHandle(external_job_id=f"{model}::{handle.request_id}", provider="fal")
 
