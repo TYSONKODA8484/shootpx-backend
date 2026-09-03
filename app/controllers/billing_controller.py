@@ -79,31 +79,47 @@ def get_billing_catalog(db: Session, region: str | None = None) -> dict:
 
 
 def get_free_plan(db: Session) -> Plan:
+    """No longer called by assign_free_plan (see its docstring — the trim
+    migration e4a71be58f78 deliberately deleted the only billing_cycle='free'
+    Plan row, there is no free tier in the current catalog). Still called by
+    _downgrade_to_free below, which is a KNOWN, currently-unresolved second
+    occurrence of the same gap: it still raises RuntimeError the moment a
+    real paid subscription actually ends via the Razorpay webhook, because
+    it still needs a Free Plan row to downgrade a TeamSubscription onto
+    (plan_id is NOT NULL). Fixing that one needs a schema change
+    (TeamSubscription.plan_id nullable, or an explicit "no active plan"
+    state) that wasn't in scope for the signup-side fix — flagged, not
+    silently patched."""
     plan = db.query(Plan).filter(Plan.billing_cycle == BillingCycle.free.value, Plan.is_active == True).first()  # noqa: E712
     if plan is None:
         raise RuntimeError("No Free plan seeded — run migrations (see alembic/versions for the seed migration)")
     return plan
 
 
-def assign_free_plan(db: Session, team: Team) -> TeamSubscription:
+STARTER_CREDIT_GRANT = 5  # Matches the old (now-deleted) Free plan's
+# credit_allowance. Business decision (e4a71be58f78) was "no free tier,
+# only paid plans" — but a brand-new signup still needs a few credits to
+# try the product before choosing one, so this is a flat grant, not tied
+# to any Plan row.
+
+
+def assign_free_plan(db: Session, team: Team) -> None:
     """Called once, right when a team is created (team_controller.
-    create_personal_team) — grants the Free plan's starter credits
-    SYNCHRONOUSLY, not via the refill cron. A brand-new signup must never
-    wait on a daily cron tick for its first credits; see core/credits.py's
-    module docstring and BOOK.md Chapter 17's "why the cost is locked in"
-    discussion of the same principle applied to grants."""
-    plan = get_free_plan(db)
-    sub = TeamSubscription(
-        team_id=team.id,
-        plan_id=plan.id,
-        status=SubscriptionStatus.free.value,
-        next_credit_refill_at=add_refill_interval(utc_now(), plan.billing_cycle),
-    )
-    db.add(sub)
-    db.flush()
-    apply_credit_delta(db, team.id, plan.credit_allowance, reason=CreditReason.plan_grant.value)
+    create_personal_team) — grants a starter credit balance SYNCHRONOUSLY,
+    not via the refill cron. A brand-new signup must never wait on a daily
+    cron tick for its first credits; see core/credits.py's module docstring
+    and BOOK.md Chapter 17's "why the cost is locked in" discussion of the
+    same principle applied to grants.
+
+    Deliberately does NOT create a Plan or TeamSubscription row (unlike the
+    old Free-plan version this replaces) — there is no free-tier Plan row
+    to point one at anymore (see get_free_plan's docstring). The team is
+    left with credits and no subscription at all until it picks a real paid
+    plan; get_billing_status already treats "no subscription row for this
+    team" as a normal, expected state (404, not a crash) for exactly this
+    reason, so nothing downstream needed to change to tolerate this."""
+    apply_credit_delta(db, team.id, STARTER_CREDIT_GRANT, reason=CreditReason.plan_grant.value)
     db.commit()
-    return sub
 
 
 def get_billing_status(db: Session, current_user: User, team_id: str) -> dict:

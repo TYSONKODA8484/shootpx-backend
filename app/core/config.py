@@ -50,6 +50,23 @@ class Settings(BaseSettings):
     # Swap LocalStorage for an R2/S3-backed implementation later.
     STORAGE_ROOT_DIR: str = "./storage"
 
+    # Which Storage implementation core/storage.py hands out. "local" (the
+    # default — unchanged behavior for local dev) or "supabase" (needs the
+    # three SUPABASE_* values below; use this on a host like Render where
+    # the API and worker are separate processes/disks and local files
+    # written by one are invisible to the other).
+    STORAGE_BACKEND: str = "local"
+    SUPABASE_URL: str = ""  # e.g. https://xxxx.supabase.co
+    SUPABASE_SERVICE_ROLE_KEY: str = ""  # Project Settings -> API -> service_role
+    # secret — server-side only, never ship this to a frontend (it bypasses
+    # Storage's row-level-security policies, same reason payment provider
+    # secrets never leave the backend).
+    SUPABASE_STORAGE_BUCKET: str = "shootpx-assets"  # must exist already and
+    # be set Public (Storage -> bucket -> Configuration) — url_for() below
+    # builds the public-object URL directly rather than requesting a signed
+    # one, same "plain fetchable URL" contract LocalStorage.url_for() makes
+    # to every caller (Asset.url).
+
     # Redis — backs the arq task queue (app/worker.py) and the per-team
     # generation lock. Get one running locally first; see DESIGN.md.
     REDIS_URL: str = "redis://localhost:6379/0"
